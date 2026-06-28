@@ -1,0 +1,29 @@
+# ── Minimal dev requirements — boots the server on SQLite with the default
+#    TF-IDF matcher. Heavy ML libs (sentence-transformers, transformers, spaCy,
+#    xgboost, lightgbm, pgvector, redis) are intentionally omitted — the code
+#    imports them lazily and falls back to TF-IDF when they're absent.
+#    For the full feature set, install requirements.txt instead (needs Python 3.12).
+
+# ── Core Django ──────────────────────────────────────────────────────────────
+Django==5.0.6
+djangorestframework==3.15.2
+djangorestframework-simplejwt==5.3.1
+django-cors-headers==4.4.0
+django-filter==24.3
+drf-spectacular==0.27.2
+python-dotenv==1.0.1
+
+# ── Required at startup (config imports Celery's scheduler) ──────────────────
+celery>=5.3
+
+# ── Default matching engine (TF-IDF + cosine) ────────────────────────────────
+scikit-learn==1.5.1
+numpy>=1.26
+
+# ── Resume parsing ───────────────────────────────────────────────────────────
+pdfminer.six==20240706
+python-docx==1.1.2
+
+# ── Skill seeding from the provided Excel CV dataset ─────────────────────────
+pandas>=2.2
+openpyxl>=3.1

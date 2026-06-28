@@ -1,0 +1,41 @@
+# ── Core Django ──────────────────────────────────────────────────────────────
+Django==5.0.6
+djangorestframework==3.15.2
+djangorestframework-simplejwt==5.3.1
+django-cors-headers==4.4.0
+django-filter==24.3
+drf-spectacular==0.27.2
+python-dotenv==1.0.1
+psycopg2-binary==2.9.9
+
+# ── Document parsing ─────────────────────────────────────────────────────────
+pdfminer.six==20240706
+python-docx==1.1.2
+
+# ── ML / Data science ────────────────────────────────────────────────────────
+scikit-learn==1.5.1
+numpy>=1.26
+pandas>=2.2
+openpyxl>=3.1
+
+# ── NLP ──────────────────────────────────────────────────────────────────────
+# Run after pip install: python -m spacy download en_core_web_sm
+spacy>=3.7,<4.0
+sentence-transformers>=2.7,<3.0
+transformers>=4.40
+
+# ── Gradient boosting (optional — for ML ranking model training) ─────────────
+lightgbm>=4.3
+xgboost>=2.0
+catboost>=1.2; platform_system != "Windows"
+
+# ── Caching & async ──────────────────────────────────────────────────────────
+redis>=5.0
+django-redis>=5.4
+celery>=5.3
+django-celery-beat>=2.6
+celery[redis]>=5.3
+
+# ── Vector store ─────────────────────────────────────────────────────────────
+# pgvector support (PostgreSQL extension must be enabled separately)
+pgvector>=0.2

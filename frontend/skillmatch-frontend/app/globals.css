@@ -1,0 +1,215 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,300..900;1,14..32,300..900&display=swap');
+
+:root {
+  --font-inter:  'Inter', system-ui, sans-serif;
+  --background:  #f8fafc;
+  --surface:     #ffffff;
+  --foreground:  #0f172a;
+  /* Text hierarchy — exactly three levels, used everywhere */
+  --text-primary:   #0f172a;  /* slate-900 — headings, key data   */
+  --text-secondary: #475569;  /* slate-600 — body copy             */
+  --text-tertiary:  #64748b;  /* slate-500 — captions, meta (4.6:1) */
+  --muted:       #64748b;
+  --border:      #e2e8f0;
+  --brand:       #059669;
+  --brand-dark:  #047857;
+  --brand-light: #ecfdf5;
+  --accent:      #0d9488;
+  --gold:        #d97706;
+  --radius:      8px;
+  --radius-lg:   12px;
+  --radius-xl:   16px;
+}
+
+html {
+  scroll-behavior: smooth;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  font-family: var(--font-inter);
+  color: #0f172a;
+  background: var(--background);
+  line-height: 1.6;
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+}
+
+/* ── Components ──────────────────────────────────────────────────────────── */
+@layer components {
+
+  .container-px { @apply mx-auto w-full max-w-6xl px-4 sm:px-6 lg:px-8; }
+
+  /* Buttons */
+  .btn          { @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold tracking-[-0.01em] transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 select-none; }
+  .btn-primary  { @apply btn bg-brand-600 text-white shadow-sm hover:bg-brand-700 focus-visible:ring-brand-500 active:scale-[0.98]; }
+  .btn-outline  { @apply btn border border-slate-200 bg-white text-slate-700 shadow-sm hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900 focus-visible:ring-brand-500; }
+  .btn-ghost    { @apply btn text-slate-600 hover:bg-slate-100 hover:text-slate-900 focus-visible:ring-slate-300; }
+  .btn-white    { @apply btn bg-white text-brand-700 shadow-sm hover:bg-brand-50 focus-visible:ring-brand-400; }
+  .btn-gold     { @apply btn bg-gradient-gold text-white shadow-sm hover:opacity-90 focus-visible:ring-amber-400; }
+
+  /* Cards */
+  .card         { @apply rounded-xl border border-slate-200/80 bg-white shadow-card; }
+  .card-hover   { @apply card transition-all duration-200 hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-lift; }
+  .card-green   { @apply rounded-xl bg-gradient-brand text-white shadow-green; }
+  .card-tinted  { @apply rounded-xl border border-brand-100 bg-gradient-card shadow-card; }
+
+  /* Form */
+  .input  { @apply w-full rounded-lg border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-900 shadow-sm placeholder:text-slate-400 transition duration-150 hover:border-slate-300 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/15; }
+  .label  { @apply mb-1.5 block text-sm font-medium text-slate-700; }
+
+  /* Chips */
+  .chip       { @apply inline-flex items-center rounded-md bg-brand-50 px-2 py-0.5 text-xs font-medium text-brand-700 ring-1 ring-inset ring-brand-600/10; }
+  .chip-green { @apply inline-flex items-center rounded-md bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700 ring-1 ring-inset ring-emerald-600/10; }
+  .chip-amber { @apply inline-flex items-center rounded-md bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700 ring-1 ring-inset ring-amber-600/10; }
+  .chip-red   { @apply inline-flex items-center rounded-md bg-red-50 px-2 py-0.5 text-xs font-medium text-red-700 ring-1 ring-inset ring-red-600/10; }
+  .chip-slate { @apply inline-flex items-center rounded-md bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600 ring-1 ring-inset ring-slate-500/10; }
+
+  /* Typography — the full hierarchy. Sizes are fluid where large.
+     page flow: display > heading > page-title > subheading > body > caption > micro */
+  .eyebrow    { @apply text-xs font-semibold uppercase tracking-[0.12em] text-brand-600; }
+  .display    {
+    @apply font-bold text-slate-900;
+    font-size: clamp(2.25rem, 1.55rem + 2.7vw, 3.5rem);  /* 36px → 56px fluid */
+    line-height: 1.08;
+    letter-spacing: -0.03em;
+  }
+  .heading    {
+    @apply font-bold text-slate-900;
+    font-size: clamp(1.5rem, 1.27rem + 0.9vw, 1.875rem);  /* 24px → 30px fluid */
+    line-height: 1.2;
+    letter-spacing: -0.022em;
+  }
+  .page-title { @apply text-2xl font-bold leading-tight tracking-[-0.02em] text-slate-900; }
+  .subheading { @apply text-lg font-semibold leading-snug tracking-[-0.01em] text-slate-900; }
+  .body-lg    { @apply text-base leading-relaxed text-slate-600 sm:text-md; }
+  .muted      { @apply text-sm leading-relaxed text-slate-500; }
+  .caption    { @apply text-xs leading-snug text-slate-500; }
+  .micro      { @apply text-2xs font-semibold uppercase tracking-[0.08em] text-slate-500; }
+  /* Comfortable reading measure for paragraphs (~68 characters) */
+  .measure    { max-width: 68ch; }
+
+  /* Score badges */
+  .score-badge { @apply rounded-md px-2 py-0.5 text-sm font-bold tabular-nums; }
+  .score-high  { @apply score-badge bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-600/15; }
+  .score-mid   { @apply score-badge bg-brand-50 text-brand-700 ring-1 ring-inset ring-brand-600/15; }
+  .score-low   { @apply score-badge bg-slate-100 text-slate-600 ring-1 ring-inset ring-slate-500/15; }
+
+  /* Progress */
+  .progress-track { @apply h-1.5 overflow-hidden rounded-full bg-slate-100; }
+  .progress-fill  { @apply h-full rounded-full transition-all duration-700 ease-out; }
+
+  /* Skeleton (shimmer) */
+  .skeleton {
+    @apply rounded-lg bg-slate-100;
+    background-image: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.7) 50%, transparent 100%);
+    background-size: 200% 100%;
+    animation: shimmer 1.6s linear infinite;
+  }
+
+  /* Sections */
+  .section     { @apply py-20 lg:py-24; }
+  .section-alt { @apply py-20 lg:py-24 bg-gradient-subtle; }
+
+  /* Pages */
+  .page          { @apply min-h-screen bg-[#f8fafc] py-10 px-4; }
+  .page-inner    { @apply mx-auto max-w-5xl; }
+  .page-inner-sm { @apply mx-auto max-w-3xl; }
+  .page-inner-md { @apply mx-auto max-w-4xl; }
+}
+
+@layer utilities {
+  .text-gradient {
+    @apply bg-gradient-to-r from-brand-600 to-accent-600 bg-clip-text text-transparent;
+  }
+  .text-gradient-gold {
+    background: linear-gradient(135deg, #d97706, #f59e0b);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  .bg-grid {
+    background-image: radial-gradient(circle, rgba(5,150,105,0.07) 1px, transparent 1px);
+    background-size: 28px 28px;
+  }
+  .bg-dots {
+    background-image: radial-gradient(circle, rgba(5,150,105,0.10) 1.5px, transparent 1.5px);
+    background-size: 20px 20px;
+  }
+  .glass {
+    backdrop-filter: blur(12px) saturate(160%);
+    -webkit-backdrop-filter: blur(12px) saturate(160%);
+    background: rgba(255,255,255,0.85);
+  }
+  /* Layered mesh — soft brand/accent glows for hero & panel backdrops */
+  .bg-mesh {
+    background-image:
+      radial-gradient(40rem 24rem at 8% -10%, rgba(5,150,105,0.10), transparent 60%),
+      radial-gradient(34rem 22rem at 105% 0%, rgba(13,148,136,0.10), transparent 55%);
+  }
+  /* Faint grid for dark/brand surfaces (e.g. admin sidebar / hero).
+     Painted as a ::before overlay so it layers ON TOP of the element's own
+     background (e.g. bg-gradient-aurora) instead of overwriting it.
+
+     NOTE: we deliberately do NOT set `position: relative` here — every element
+     that uses bg-grid-light already establishes its own positioning context
+     (relative/fixed), and forcing `relative` would override `position: fixed`
+     on the admin sidebar and break the whole layout. */
+  .bg-grid-light::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background-image:
+      linear-gradient(rgba(255,255,255,0.06) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,0.06) 1px, transparent 1px);
+    background-size: 22px 22px;
+  }
+  /* Hairline divider with a subtle gradient fade */
+  .rule-fade {
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(15,23,42,0.10), transparent);
+  }
+  /* Frosted panel for elevated content over patterned backdrops */
+  .card-glass {
+    @apply rounded-2xl border border-white/60 shadow-card;
+    background: rgba(255,255,255,0.78);
+    backdrop-filter: blur(10px) saturate(150%);
+    -webkit-backdrop-filter: blur(10px) saturate(150%);
+  }
+}
+
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 99px; }
+::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+::selection { background: rgba(5,150,105,0.14); color: #064e3b; }
+
+/* Keyboard navigation: links get a visible focus ring (buttons/inputs already
+   carry focus-visible rings via component classes). */
+a:focus-visible {
+  outline: 2px solid rgba(5, 150, 105, 0.55);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* Touch devices: guarantee 44px minimum tap targets on core controls. */
+@media (pointer: coarse) {
+  .btn, .input { min-height: 44px; }
+}
+
+@keyframes shimmer {
+  from { background-position: 200% 0; }
+  to   { background-position: -200% 0; }
+}
+
+/* Toast entrance animation */
+@keyframes slideIn {
+  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
