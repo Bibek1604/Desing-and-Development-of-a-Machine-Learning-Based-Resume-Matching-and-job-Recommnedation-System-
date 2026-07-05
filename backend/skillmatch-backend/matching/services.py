@@ -1,18 +1,19 @@
 """Matching services: turn resumes + jobs into ranked, scored recommendations.
 
-Pipeline (v2 — accuracy pass):
+Pipeline (v3 -- ranker + collab boost):
   1. Candidate document = resume text + profile summary + preferred role +
      normalized skills (richer signal than resume-only).
   2. Semantic similarity from a prebuilt TF-IDF index (1-2 grams,
-     sublinear tf), calibrated with a square-root transform because raw
-     cosine values for short texts cluster in [0.05, 0.35].
+     sublinear tf), calibrated with a square-root transform.
   3. Skill overlap computed on *normalized* skill names (synonyms like
-     "reactjs" -> "react", variant suffixes like "Python Fundamentals"
-     -> "python") with coverage + small absolute-match bonus.
-  4. Final score = w1 * calibrated_similarity + w2 * overlap, 0-100.
-
-Non-TF-IDF backends (semantic / hybrid) still work through the generic
-matcher interface and benefit from steps 1, 3 and 4.
+     "reactjs" -> "react", suffix strip like "Python Fundamentals" -> "python").
+  4. Hybrid content score = w1 * sqrt(similarity) + w2 * overlap, 0-100.
+  5. Trained RandomForest ranker (if the artifact is present) re-ranks the
+     hybrid top-N so every scoring surface -- recommendations, employer
+     ranking, and Application.match_score -- uses one score model.
+  6. Item-item collaborative signal (users who applied to X also applied
+     to Y) is blended into the final score so co-application patterns can
+     surface jobs that content similarity misses.
 """
 import math
 
@@ -21,7 +22,7 @@ from django.conf import settings
 from jobs.models import Job
 from .engine import get_matcher
 
-# ── Skill normalization ───────────────────────────────────────────────────────
+# --- Skill normalization ----------------------------------------------------
 
 _SKILL_SUFFIXES = (" fundamentals", " advanced", " certification", " basics")
 
@@ -51,7 +52,7 @@ _SKILL_SYNONYMS = {
 }
 
 
-def normalize_skill(name: str) -> str:
+def normalize_skill(name):
     """Canonical lowercase form of a skill name for overlap comparison."""
     n = (name or "").strip().lower()
     for suffix in _SKILL_SUFFIXES:
@@ -61,47 +62,36 @@ def normalize_skill(name: str) -> str:
     return _SKILL_SYNONYMS.get(n, n)
 
 
-# ── Scoring helpers ───────────────────────────────────────────────────────────
+# --- Scoring helpers --------------------------------------------------------
 
 def _weights():
     w = getattr(settings, "MATCH_WEIGHTS", {"similarity": 0.6, "skill_overlap": 0.4})
     return w.get("similarity", 0.6), w.get("skill_overlap", 0.4)
 
 
-def _calibrate(similarity: float) -> float:
-    """Spread raw short-text cosine values over a usable [0, 1] range.
-
-    sqrt is monotonic (ranking is preserved) but lifts the typical
-    0.05-0.35 raw band to 0.22-0.59, so combined scores are meaningful.
-    """
+def _calibrate(similarity):
+    """Spread raw short-text cosine values over a usable [0, 1] range."""
     return math.sqrt(max(0.0, min(1.0, similarity)))
 
 
-def _skill_overlap(candidate_skills: set[str], job_skills: set[str]):
+def _skill_overlap(candidate_skills, job_skills):
     """Coverage of the job's requirements with a small absolute bonus."""
     if not job_skills:
         return 0.0, []
     matched = candidate_skills & job_skills
     coverage = len(matched) / len(job_skills)
-    bonus = 0.04 * min(len(matched), 4)  # rewards breadth on skill-heavy jobs
+    bonus = 0.04 * min(len(matched), 4)
     return min(1.0, coverage + bonus), sorted(matched)
 
 
-def _combine(similarity: float, overlap: float) -> int:
+def _combine(similarity, overlap):
     w_sim, w_overlap = _weights()
     score = (w_sim * _calibrate(similarity) + w_overlap * overlap) * 100
     return max(0, min(100, int(round(score))))
 
 
 def candidate_text_and_skills(user):
-    """Candidate document + normalized skill set.
-
-    Combines resume text with structured profile fields so profile-only
-    users (no resume yet) still produce a meaningful document.
-    """
-    # Iterate the (possibly prefetched) resume set in Python — calling
-    # .filter() here would bypass prefetch_related and cause N+1 queries
-    # when building the candidate index over thousands of profiles.
+    """Candidate document + normalized skill set."""
     resumes = list(user.resumes.all())
     resume = next((r for r in resumes if r.is_primary), resumes[0] if resumes else None)
     parts = []
@@ -109,14 +99,13 @@ def candidate_text_and_skills(user):
         parts.append(resume.raw_text)
 
     profile = getattr(user, "candidate_profile", None)
-    skills: set[str] = set()
+    skills = set()
     if profile is not None:
         skills = {normalize_skill(s) for s in profile.skills.values_list("name", flat=True)}
         for field in ("resume_summary", "career_objective", "preferred_role", "degree"):
             value = getattr(profile, field, "") or ""
             if value:
                 parts.append(str(value))
-        # Repeat the preferred role: it is the strongest intent signal we have.
         if profile.preferred_role:
             parts.append(profile.preferred_role)
     if skills:
@@ -129,20 +118,91 @@ def candidate_text_and_skills(user):
 _candidate_text_and_skills = candidate_text_and_skills
 
 
-def _use_index() -> bool:
+def _use_index():
     backend = getattr(settings, "MATCHER_BACKEND", "tfidf").lower()
     return backend == "tfidf"
 
 
-# ── Public API (signatures unchanged) ─────────────────────────────────────────
+# --- Trained-ranker + collab helpers ---------------------------------------
 
-def recommend_jobs_for_candidate(user, limit: int = 20):
-    """Return [{job, score, similarity, matched_skills}] ranked best-first."""
+def _rerank_with_trained_model(user, shortlist):
+    """Score each shortlisted job with the trained ranker. {job_id: 0-100}.
+
+    Falls back to an empty dict (so the hybrid score is used) if the model
+    artifact isn't loaded or the ranker fails for any reason.
+    """
+    try:
+        from .ranking_model import CandidateJobRanker, _get_model
+        if _get_model() is None:
+            return {}
+        ranker = CandidateJobRanker()
+        return {r["job"].pk: ranker.score(user, r["job"]) for r in shortlist}
+    except Exception:
+        return {}
+
+
+def _collab_boost_for_candidate(user, candidate_job_ids):
+    """Item-item collaborative-filtering boost keyed by job id, values in [0, 1].
+
+    boost(J) = (# peers who applied to both J and any job C already applied to)
+                / max_peer_count
+
+    Peers = other users who applied to any of C's jobs. If C has no
+    applications, everyone gets 0 -- recs degrade to content-only.
+    """
+    try:
+        from applications.models import Application
+        from collections import Counter
+    except Exception:
+        return {}
+
+    applied = list(
+        Application.objects
+        .filter(candidate=user)
+        .values_list("job_id", flat=True)
+    )
+    if not applied:
+        return {}
+
+    peer_ids = list(
+        Application.objects
+        .filter(job_id__in=applied)
+        .exclude(candidate=user)
+        .values_list("candidate_id", flat=True)
+        .distinct()[:5000]
+    )
+    if not peer_ids:
+        return {}
+
+    counts = Counter(
+        Application.objects
+        .filter(candidate_id__in=peer_ids, job_id__in=candidate_job_ids)
+        .exclude(job_id__in=applied)
+        .values_list("job_id", flat=True)
+    )
+    if not counts:
+        return {}
+    top = max(counts.values())
+    return {jid: c / top for jid, c in counts.items()}
+
+
+# --- Public API -------------------------------------------------------------
+
+def recommend_jobs_for_candidate(user, limit=20):
+    """Return [{job, score, similarity, matched_skills}] ranked best-first.
+
+    Two-stage pipeline:
+      1. Hybrid content matcher shortlists top ~2xlimit jobs (fast, index-backed).
+      2. Trained RandomForest ranker (if the artifact is present) re-ranks
+         the shortlist and provides the final score. Otherwise the hybrid
+         score is used.
+      3. Collaborative-filtering boost (item-item co-application) is blended
+         into the final score -- users who applied to X also applied to Y.
+    """
     resume_text, cand_skills = candidate_text_and_skills(user)
 
     if _use_index():
         from .index import get_job_index
-
         index = get_job_index()
         if not index.jobs:
             return []
@@ -159,34 +219,55 @@ def recommend_jobs_for_candidate(user, limit: int = 20):
             for j in jobs
         ]
 
-    results = []
+    # Stage 1: hybrid shortlist
+    shortlist = []
     for job, sim, job_skills in zip(jobs, sims, job_skill_sets):
         overlap, matched = _skill_overlap(cand_skills, job_skills)
-        # Return the job's original skill labels (e.g. "REST APIs"), not the
-        # lowercased normalized forms used for matching. Uses the prefetched
-        # related set, so no extra query.
         display = {normalize_skill(s.name): s.name for s in job.required_skills.all()}
-        results.append({
-            "job": job,
-            "score": _combine(sim, overlap),
-            "similarity": int(round(_calibrate(sim) * 100)),
+        shortlist.append({
+            "job":            job,
+            "hybrid_score":   _combine(sim, overlap),
+            "similarity":     int(round(_calibrate(sim) * 100)),
             "matched_skills": [display.get(m, m) for m in matched],
+        })
+    shortlist.sort(key=lambda r: r["hybrid_score"], reverse=True)
+    shortlist = shortlist[: max(30, limit * 2)]
+    if not shortlist:
+        return []
+
+    # Stage 2: trained-ranker rerank
+    ranker_scores = _rerank_with_trained_model(user, shortlist)
+
+    # Stage 3: collaborative-filtering boost
+    collab = _collab_boost_for_candidate(user, [r["job"].pk for r in shortlist])
+
+    results = []
+    for r in shortlist:
+        base = ranker_scores.get(r["job"].pk, r["hybrid_score"])
+        boost = collab.get(r["job"].pk, 0)
+        final = max(0, min(100, int(round(base * 0.85 + boost * 15))))
+        results.append({
+            "job":            r["job"],
+            "score":          final,
+            "similarity":     r["similarity"],
+            "matched_skills": r["matched_skills"],
         })
     results.sort(key=lambda r: r["score"], reverse=True)
     return results[:limit]
 
 
-def rank_candidates_for_job(job, limit: int = 20):
-    """Return [{candidate, score, similarity, matched_skills}] ranked best-first."""
+def rank_candidates_for_job(job, limit=20):
+    """Return [{candidate, score, similarity, matched_skills}] ranked best-first.
+
+    Same two-stage design as candidate-side: hybrid shortlist, then trained
+    ranker rerank so employers see the same score model as candidates.
+    """
     job_text = job.as_match_text()
-    # Original-cased labels keyed by their normalized form, so matched skills
-    # are returned as "REST APIs" rather than the lowercased "rest apis".
     job_skill_display = {normalize_skill(s.name): s.name for s in job.required_skills.all()}
     job_skills = set(job_skill_display)
 
     if _use_index():
         from .index import get_candidate_index
-
         index = get_candidate_index()
         if not index.users:
             return []
@@ -194,7 +275,6 @@ def rank_candidates_for_job(job, limit: int = 20):
         users, skill_sets = index.users, index.skill_sets
     else:
         from accounts.models import CandidateProfile
-
         profiles = list(
             CandidateProfile.objects.select_related("user").prefetch_related("user__resumes", "skills")
         )
@@ -209,21 +289,51 @@ def rank_candidates_for_job(job, limit: int = 20):
         matcher = get_matcher()
         sims = matcher.similarity(job_text, docs)
 
-    results = []
+    shortlist = []
     for user, sim, cand_skills in zip(users, sims, skill_sets):
         overlap, matched = _skill_overlap(cand_skills, job_skills)
-        results.append({
-            "candidate": user,
-            "score": _combine(sim, overlap),
-            "similarity": int(round(_calibrate(sim) * 100)),
+        shortlist.append({
+            "candidate":      user,
+            "hybrid_score":   _combine(sim, overlap),
+            "similarity":     int(round(_calibrate(sim) * 100)),
             "matched_skills": [job_skill_display.get(m, m) for m in matched],
+        })
+    shortlist.sort(key=lambda r: r["hybrid_score"], reverse=True)
+    shortlist = shortlist[: max(30, limit * 2)]
+
+    try:
+        from .ranking_model import CandidateJobRanker, _get_model
+        ranker = CandidateJobRanker() if _get_model() is not None else None
+    except Exception:
+        ranker = None
+
+    results = []
+    for r in shortlist:
+        base = ranker.score(r["candidate"], job) if ranker else r["hybrid_score"]
+        results.append({
+            "candidate":      r["candidate"],
+            "score":          int(round(base)),
+            "similarity":     r["similarity"],
+            "matched_skills": r["matched_skills"],
         })
     results.sort(key=lambda r: r["score"], reverse=True)
     return results[:limit]
 
 
-def score_candidate_for_job(user, job) -> int:
-    """Single match score (0-100) for one candidate against one job."""
+def score_candidate_for_job(user, job):
+    """Single match score (0-100) for one candidate against one job.
+
+    Uses the trained ranker if the artifact is present, so every surface that
+    shows a match score (recommendations, employer ranking, and the number
+    stamped on an Application) shares the same scoring model. Falls back to
+    the hybrid content score when the artifact isn't available.
+    """
+    try:
+        from .ranking_model import CandidateJobRanker, _get_model
+        if _get_model() is not None:
+            return int(CandidateJobRanker().score(user, job))
+    except Exception:
+        pass
     resume_text, cand_skills = candidate_text_and_skills(user)
     matcher = get_matcher()
     sims = matcher.similarity(resume_text, [job.as_match_text()])
