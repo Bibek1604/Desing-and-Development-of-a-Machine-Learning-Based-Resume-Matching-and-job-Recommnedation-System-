@@ -33,7 +33,6 @@ export default function AllJobsPage() {
   const [appliedIds, setAppliedIds] = useState<Set<number>>(new Set());
   const [applyingId, setApplyingId] = useState<number | null>(null);
   const [applyFor,   setApplyFor]   = useState<Job | null>(null);
-  // Map jobId -> savedRowId so we can DELETE the right saved-job row on unsave.
   const [savedMap,   setSavedMap]   = useState<Map<number, number>>(new Map());
   const toast = useToast();
 
@@ -56,7 +55,6 @@ export default function AllJobsPage() {
       .catch((err) => { setLoadError(err); setAllJobs([]); setTotal(0); setNumPages(1); });
 
     const promises: Promise<unknown>[] = [listPromise];
-    // Pull recommendations only to annotate match scores on the cards.
     if (isAuthenticated && isCandidate) {
       promises.push(
         matching.recommendations().then(r => setRecMatches(r as JobMatch[])).catch(() => setRecMatches([])),
@@ -102,9 +100,6 @@ export default function AllJobsPage() {
     }
   }
 
-  // Instead of applying immediately, open the ApplyModal so the candidate
-  // can supply an optional cover note. The actual POST happens in
-  // `submitApplication` once they hit Submit in the modal.
   function openApply(jobId: number) {
     const job = allJobs.find((j) => j.id === jobId);
     if (job) setApplyFor(job);
@@ -136,10 +131,6 @@ export default function AllJobsPage() {
 
   const recJobMap = new Map(recMatches.map(m => [m.job.id, m]));
 
-  // Client-side location + salary filter. Backend `search` handles keyword +
-  // job_type; the extra filters run over the current page result set. This
-  // is intentional — it keeps the current server contract stable while still
-  // giving candidates finer control on the visible list.
   const filteredJobs = useMemo(() => {
     const loc = location.trim().toLowerCase();
     const minS = minSalary ? parseInt(minSalary, 10) * 1000 : 0;
@@ -183,7 +174,6 @@ export default function AllJobsPage() {
           subtitle="Browse every open position across Nepal's tech sector"
         />
 
-        {/* Search + filters */}
         <div className="flex flex-wrap items-center gap-3 mb-3">
           <div className="relative flex-1 min-w-48">
             <Search size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
@@ -278,7 +268,6 @@ export default function AllJobsPage() {
           </div>
         )}
 
-        {/* Pagination */}
         {!loading && !loadError && numPages > 1 && (
           <div className="mt-8 flex items-center justify-center gap-3">
             <button disabled={page <= 1} onClick={() => setPage(p => Math.max(1, p - 1))}

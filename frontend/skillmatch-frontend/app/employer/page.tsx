@@ -359,7 +359,7 @@ function CandidatesPanel({ jobId }: { jobId: number }) {
     setCandLoading(true);
     setCandError(null);
     matching.jobCandidates(jobId)
-      .then(r => setCandidates((r as { results: CandidateMatch[] }).results ?? r))
+      .then(r => setCandidates((r as unknown as { results: CandidateMatch[] }).results ?? (r as CandidateMatch[])))
       .catch((err) => { setCandError(err); setCandidates([]); })
       .finally(() => setCandLoading(false));
   }, [jobId]);

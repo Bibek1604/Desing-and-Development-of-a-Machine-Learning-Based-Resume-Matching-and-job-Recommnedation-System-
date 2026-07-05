@@ -207,7 +207,7 @@ export function GapDrawer({ jobId, onClose }: { jobId: number | null; onClose: (
     setLoading(true);
     setGap(null);
     matching.skillGap(jobId)
-      .then(setGap)
+      .then((r) => setGap(r as unknown as Record<string, unknown>))
       .catch((err) => setGap({ error: humanizeError(err) }))
       .finally(() => setLoading(false));
   }, [jobId]);

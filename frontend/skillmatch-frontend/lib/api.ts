@@ -557,22 +557,6 @@ export const emailVerification = {
     request<{ detail: string; email?: string }>("/api/auth/verify-email/confirm/", "POST", { uid, token }),
 };
 
-// ── Saved jobs (bookmarks) ──────────────────────────────────────────────────
-export interface SavedJob {
-  id:          number;
-  job:         number;
-  job_detail?: Job;
-  created_at:  string;
-}
-
-export const savedJobs = {
-  list: () =>
-    request<SavedJob[] | { results: SavedJob[]; count: number }>("/api/saved-jobs/"),
-  save: (jobId: number) =>
-    request<SavedJob>("/api/saved-jobs/", "POST", { job: jobId }),
-  unsave: (id: number) =>
-    request<void>(`/api/saved-jobs/${id}/`, "DELETE"),
-};
 
 // ── Notifications ─────────────────────────────────────────────────────────────
 export interface AppNotification {
