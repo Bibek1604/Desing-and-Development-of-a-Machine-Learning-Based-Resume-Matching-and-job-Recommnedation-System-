@@ -37,7 +37,10 @@ async function tryRefresh(): Promise<boolean> {
     });
     if (!res.ok) { tokens.clear(); return false; }
     const data = await res.json();
-    tokens.set(data.access, refresh);
+    // Honour refresh-token rotation: if the backend returns a fresh refresh
+    // token (SIMPLE_JWT.ROTATE_REFRESH_TOKENS=True), use it instead of the old
+    // one so stolen refresh tokens expire on next legitimate refresh.
+    tokens.set(data.access, data.refresh || refresh);
     return true;
   } catch {
     tokens.clear();
@@ -185,10 +188,11 @@ export function homeForRole(role: UserRole | undefined): string {
   return "/dashboard";
 }
 export interface MeResponse {
-  id:        number;
-  email:     string;
-  full_name: string;
-  role:      UserRole;
+  id:              number;
+  email:           string;
+  full_name:       string;
+  role:            UserRole;
+  email_verified?: boolean;
 }
 export interface ProfileResponse {
   id:                 number;
@@ -521,6 +525,38 @@ export const feedback = {
       "/api/feedback/", "POST", { job, signal, score, comment },
     ),
 };
+
+// ── Saved jobs (bookmarks) ──────────────────────────────────────────────────
+export interface SavedJob {
+  id:          number;
+  job:         number;
+  job_detail?: Job;
+  created_at:  string;
+}
+
+export const savedJobs = {
+  list: () =>
+    request<SavedJob[] | { results: SavedJob[]; count: number }>("/api/saved-jobs/"),
+  save: (jobId: number) =>
+    request<SavedJob>("/api/saved-jobs/", "POST", { job: jobId }),
+  unsave: (id: number) =>
+    request<void>(`/api/saved-jobs/${id}/`, "DELETE"),
+};
+
+// ── Password reset & email verification ────────────────────────────────────
+export const passwordReset = {
+  request: (email: string) =>
+    request<{ detail: string }>("/api/auth/password-reset/request/", "POST", { email }),
+  confirm: (uid: string, token: string, new_password: string) =>
+    request<{ detail: string }>("/api/auth/password-reset/confirm/", "POST", { uid, token, new_password }),
+};
+
+export const emailVerification = {
+  send: () => request<{ detail: string }>("/api/auth/verify-email/send/", "POST", {}),
+  confirm: (uid: string, token: string) =>
+    request<{ detail: string; email?: string }>("/api/auth/verify-email/confirm/", "POST", { uid, token }),
+};
+
 
 // ── Notifications ─────────────────────────────────────────────────────────────
 export interface AppNotification {

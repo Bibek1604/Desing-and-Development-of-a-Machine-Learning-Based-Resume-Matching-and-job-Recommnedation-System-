@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Eye, EyeOff, CheckCircle2, AlertTriangle, Sparkles, Mail, Lock } from "lucide-react";
@@ -9,6 +9,21 @@ import { humanizeError, homeForRole } from "@/lib/api";
 import { useToast } from "@/context/ToastContext";
 import Logo from "@/components/Logo";
 import Spinner from "@/components/Spinner";
+
+/** Only allow single-segment same-origin paths as ?next= targets so the
+ * login page can't be turned into an open redirect. */
+function safeNext(raw: string | null): string | null {
+  if (!raw) return null;
+  try {
+    const decoded = decodeURIComponent(raw);
+    if (!decoded.startsWith("/") || decoded.startsWith("//") || decoded.startsWith("/\\")) {
+      return null;
+    }
+    return decoded;
+  } catch {
+    return null;
+  }
+}
 
 export default function LoginPage() {
   const { login } = useAuth();
@@ -20,6 +35,15 @@ export default function LoginPage() {
   const [showPw,   setShowPw]   = useState(false);
   const [error,    setError]    = useState("");
   const [loading,  setLoading]  = useState(false);
+  const [nextUrl,  setNextUrl]  = useState<string | null>(null);
+
+  // Read ?next= without pulling in Suspense — parse window.location.search
+  // once on mount, then validate the destination.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    setNextUrl(safeNext(params.get("next")));
+  }, []);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -28,7 +52,8 @@ export default function LoginPage() {
     try {
       const me = await login(email, password);
       toast.success("Welcome back!");
-      router.push(homeForRole(me.role));
+      // ?next= wins if present and safe; otherwise fall back to role home.
+      router.push(nextUrl || homeForRole(me.role));
     } catch (err) {
       const message = humanizeError(err);
       setError(message);
@@ -140,6 +165,12 @@ export default function LoginPage() {
             <div>
               <div className="flex items-center justify-between mb-1.5">
                 <label className="label !mb-0">Password</label>
+                <Link
+                  href="/forgot-password"
+                  className="text-2xs font-semibold text-brand-600 hover:text-brand-700"
+                >
+                  Forgot password?
+                </Link>
               </div>
               <div className="relative">
                 <Lock size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />

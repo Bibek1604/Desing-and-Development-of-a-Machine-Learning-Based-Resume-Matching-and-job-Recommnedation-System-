@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useCallback, type FormEvent } from "react"
 import {
   Briefcase, Users, CheckCircle, MapPin, AlertTriangle, ChevronDown,
   Building2, Plus, Eye, EyeOff, Pause, Play, Save, Camera, Inbox, Clock,
+  Pencil, X as XIcon,
 } from "lucide-react";
 import { useRequireAuth } from "@/context/AuthContext";
 import {
@@ -48,41 +49,48 @@ function Field({ label, required, children }: {
 // ─────────────────────────────────────────────────────────────────────────────
 // Post a Job
 // ─────────────────────────────────────────────────────────────────────────────
-function PostJobForm({ initialCompany, onPosted }: {
+function PostJobForm({ initialCompany, initialJob, mode = "create", onPosted, onCancel }: {
   initialCompany?: string;
+  initialJob?: Job;                  // supplied in edit mode
+  mode?: "create" | "edit";          // create posts a new job, edit PATCHes an existing one
   onPosted: (job: Job) => void;
+  onCancel?: () => void;             // shown as a "Cancel" button in edit mode
 }) {
+  const isEdit = mode === "edit" && initialJob != null;
   const toast = useToast();
-  const [title,        setTitle]        = useState("");
-  const [company,      setCompany]      = useState(initialCompany ?? "");
-  const [location,     setLocation]     = useState("Kathmandu, Nepal");
-  const [jobType,      setJobType]      = useState("full_time");
-  const [description,  setDescription]  = useState("");
-  const [requirements, setRequirements] = useState("");
-  const [salaryMin,    setSalaryMin]    = useState("");
-  const [salaryMax,    setSalaryMax]    = useState("");
+  const [title,        setTitle]        = useState(initialJob?.title ?? "");
+  const [company,      setCompany]      = useState(initialJob?.company ?? initialCompany ?? "");
+  const [location,     setLocation]     = useState(initialJob?.location ?? "Kathmandu, Nepal");
+  const [jobType,      setJobType]      = useState(initialJob?.job_type ?? "full_time");
+  const [description,  setDescription]  = useState(initialJob?.description ?? "");
+  const [requirements, setRequirements] = useState(initialJob?.requirements ?? "");
+  const [salaryMin,    setSalaryMin]    = useState(initialJob?.salary_min ? String(initialJob.salary_min) : "");
+  const [salaryMax,    setSalaryMax]    = useState(initialJob?.salary_max ? String(initialJob.salary_max) : "");
   const [loading,      setLoading]      = useState(false);
   const [error,        setError]        = useState("");
 
   // Keep company in sync once the profile loads (only if untouched).
   useEffect(() => {
-    if (initialCompany) setCompany(prev => prev || initialCompany);
-  }, [initialCompany]);
+    if (!isEdit && initialCompany) setCompany(prev => prev || initialCompany);
+  }, [initialCompany, isEdit]);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setError("");
     setLoading(true);
     try {
-      const job = await jobsApi.create({
+      const payload = {
         title, company, location,
         job_type: jobType,
         description, requirements,
         salary_min: salaryMin ? Number(salaryMin) : undefined,
         salary_max: salaryMax ? Number(salaryMax) : undefined,
-      });
+      };
+      const job = isEdit
+        ? await jobsApi.update(initialJob!.id, payload)
+        : await jobsApi.create(payload);
       onPosted(job);
-      toast.success("Job posted successfully!");
+      toast.success(isEdit ? "Job updated" : "Job posted successfully!");
     } catch (err) {
       const msg = humanizeError(err);
       setError(msg);
@@ -95,9 +103,11 @@ function PostJobForm({ initialCompany, onPosted }: {
   return (
     <form onSubmit={handleSubmit} className="card p-6 sm:p-7 space-y-5">
       <div>
-        <h2 className="subheading">Post a New Job</h2>
+        <h2 className="subheading">{isEdit ? "Edit Job Posting" : "Post a New Job"}</h2>
         <p className="text-sm text-slate-500 mt-0.5">
-          Our AI will instantly rank the best-matched candidates after posting.
+          {isEdit
+            ? "Update the details of this posting. Applicants already assigned to the job will remain."
+            : "Our AI will instantly rank the best-matched candidates after posting."}
         </p>
       </div>
 
@@ -188,23 +198,35 @@ function PostJobForm({ initialCompany, onPosted }: {
         </Field>
       </div>
 
-      <button
-        type="submit"
-        disabled={loading}
-        className="btn-primary w-full justify-center !py-3 !text-md"
-      >
-        {loading ? (
-          <span className="flex items-center gap-2">
-            <Spinner size={16} />
-            Posting &amp; matching&hellip;
-          </span>
-        ) : (
-          <>
-            <Briefcase size={16} />
-            Post Job &amp; Find Candidates
-          </>
+      <div className="flex items-center gap-3">
+        {onCancel && (
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={loading}
+            className="btn-ghost !py-3 !text-md"
+          >
+            Cancel
+          </button>
         )}
-      </button>
+        <button
+          type="submit"
+          disabled={loading}
+          className="btn-primary flex-1 justify-center !py-3 !text-md"
+        >
+          {loading ? (
+            <span className="flex items-center gap-2">
+              <Spinner size={16} />
+              {isEdit ? "Saving…" : "Posting & matching…"}
+            </span>
+          ) : (
+            <>
+              <Briefcase size={16} />
+              {isEdit ? "Save Changes" : "Post Job & Find Candidates"}
+            </>
+          )}
+        </button>
+      </div>
     </form>
   );
 }
@@ -337,7 +359,7 @@ function CandidatesPanel({ jobId }: { jobId: number }) {
     setCandLoading(true);
     setCandError(null);
     matching.jobCandidates(jobId)
-      .then(r => setCandidates((r as { results: CandidateMatch[] }).results ?? r))
+      .then(r => setCandidates((r as unknown as { results: CandidateMatch[] }).results ?? (r as CandidateMatch[])))
       .catch((err) => { setCandError(err); setCandidates([]); })
       .finally(() => setCandLoading(false));
   }, [jobId]);
@@ -447,8 +469,10 @@ function PostJobPanel({ initialCompany }: { initialCompany?: string }) {
 function PostingRow({ job, onChanged }: { job: Job; onChanged: () => void }) {
   const toast = useToast();
   const [open, setOpen]       = useState(false);
+  const [edit, setEdit]       = useState(false);
   const [busy, setBusy]       = useState(false);
   const [active, setActive]   = useState(job.is_active);
+  const [current, setCurrent] = useState<Job>(job);
 
   async function toggleActive() {
     setBusy(true);
@@ -464,7 +488,7 @@ function PostingRow({ job, onChanged }: { job: Job; onChanged: () => void }) {
     }
   }
 
-  const typeLabel = JOB_TYPES.find(t => t.value === job.job_type)?.label ?? job.job_type;
+  const typeLabel = JOB_TYPES.find(t => t.value === current.job_type)?.label ?? current.job_type;
 
   return (
     <div className="rounded-lg border border-slate-200/80 bg-white">
@@ -474,15 +498,15 @@ function PostingRow({ job, onChanged }: { job: Job; onChanged: () => void }) {
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
-            <p className="font-semibold text-slate-900 truncate text-sm">{job.title}</p>
+            <p className="font-semibold text-slate-900 truncate text-sm">{current.title}</p>
             <span className={active ? "chip-green text-2xs" : "chip-slate text-2xs"}>
               {active ? "Active" : "Closed"}
             </span>
           </div>
           <p className="text-xs text-slate-500 truncate mt-0.5">
             {typeLabel}
-            {job.location ? ` · ${job.location}` : ""}
-            {job.created_at ? ` · posted ${new Date(job.created_at).toLocaleDateString()}` : ""}
+            {current.location ? ` · ${current.location}` : ""}
+            {current.created_at ? ` · posted ${new Date(current.created_at).toLocaleDateString()}` : ""}
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
@@ -492,6 +516,13 @@ function PostingRow({ job, onChanged }: { job: Job; onChanged: () => void }) {
           >
             {open ? <EyeOff size={14} /> : <Eye size={14} />}
             {open ? "Hide" : "Candidates"}
+          </button>
+          <button
+            onClick={() => setEdit(true)}
+            className="btn-ghost !px-3 !py-2 !text-xs"
+            title="Edit this posting"
+          >
+            <Pencil size={14} /> Edit
           </button>
           <button
             onClick={toggleActive}
@@ -506,7 +537,42 @@ function PostingRow({ job, onChanged }: { job: Job; onChanged: () => void }) {
       </div>
       {open && (
         <div className="border-t border-slate-100 p-4">
-          <CandidatesPanel jobId={job.id} />
+          <CandidatesPanel jobId={current.id} />
+        </div>
+      )}
+
+      {edit && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true">
+          <div
+            className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm animate-fade-in"
+            onClick={() => setEdit(false)}
+          />
+          <div className="relative z-10 w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl bg-white shadow-pop animate-slide-up">
+            <div className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-100 bg-white/95 backdrop-blur px-6 py-3">
+              <p className="text-sm font-semibold text-slate-700">Edit job posting</p>
+              <button
+                type="button"
+                onClick={() => setEdit(false)}
+                aria-label="Close edit form"
+                className="flex h-8 w-8 items-center justify-center rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors"
+              >
+                <XIcon size={16} />
+              </button>
+            </div>
+            <div className="p-2">
+              <PostJobForm
+                mode="edit"
+                initialJob={current}
+                onCancel={() => setEdit(false)}
+                onPosted={(updated) => {
+                  setCurrent(updated);
+                  setActive(updated.is_active);
+                  setEdit(false);
+                  onChanged();
+                }}
+              />
+            </div>
+          </div>
         </div>
       )}
     </div>

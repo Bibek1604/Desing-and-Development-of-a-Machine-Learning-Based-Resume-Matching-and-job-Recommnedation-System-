@@ -2,18 +2,18 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.password_validation import validate_password
 from rest_framework import serializers
 
-from skills.serializers import SkillSerializer
 from .models import CandidateProfile, EmployerProfile
 
 User = get_user_model()
 
 
 class RegisterSerializer(serializers.ModelSerializer):
-    password = serializers.CharField(write_only=True, validators=[validate_password])
+    password = serializers.CharField(write_only=True, min_length=8, validators=[validate_password])
+    role = serializers.ChoiceField(choices=User.Role.choices, default=User.Role.CANDIDATE)
 
     class Meta:
         model = User
-        fields = ("id", "email", "full_name", "role", "password")
+        fields = ("email", "full_name", "password", "role")
 
     def validate_role(self, value):
         if value == User.Role.ADMIN:
@@ -21,35 +21,23 @@ class RegisterSerializer(serializers.ModelSerializer):
         return value
 
     def create(self, validated_data):
-        password = validated_data.pop("password")
-        return User.objects.create_user(password=password, **validated_data)
+        return User.objects.create_user(**validated_data)
 
 
 class CandidateProfileSerializer(serializers.ModelSerializer):
-    skills = SkillSerializer(many=True, read_only=True)
-
-    avatar = serializers.FileField(read_only=True)
+    skills = serializers.SerializerMethodField()
 
     class Meta:
         model = CandidateProfile
-        fields = (
-            "id", "headline", "location", "phone", "skills", "avatar",
-            # Education & background (consumed by the frontend profile client)
-            "degree", "college", "university", "graduation_year", "cgpa",
-            "district", "province",
-            "soft_skills", "certifications", "languages",
-            "github_url", "linkedin_url", "portfolio_url",
-            "resume_summary", "career_objective", "preferred_role",
-            "expected_salary_min", "expected_salary_max", "availability",
-            # Computed / ML fields are read-only
-            "resume_score", "ats_score", "hiring_probability", "updated_at",
-        )
-        read_only_fields = ("id", "avatar", "resume_score", "ats_score", "hiring_probability", "updated_at")
+        fields = "__all__"
+        read_only_fields = ("user", "avatar", "resume_score", "ats_score",
+                            "hiring_probability", "updated_at")
+
+    def get_skills(self, obj):
+        return [{"id": s.id, "name": s.name, "slug": s.slug} for s in obj.skills.all()]
 
 
 class EmployerProfileSerializer(serializers.ModelSerializer):
-    logo = serializers.FileField(read_only=True)
-
     class Meta:
         model = EmployerProfile
         fields = ("company_name", "website", "location", "description", "logo", "updated_at")
@@ -63,7 +51,7 @@ class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = (
-            "id", "email", "full_name", "role", "date_joined",
+            "id", "email", "full_name", "role", "date_joined", "email_verified",
             "candidate_profile", "employer_profile",
         )
-        read_only_fields = ("id", "email", "role", "date_joined")
+        read_only_fields = ("id", "email", "role", "date_joined", "email_verified")

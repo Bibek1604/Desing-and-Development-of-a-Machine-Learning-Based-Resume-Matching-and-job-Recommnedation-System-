@@ -91,7 +91,17 @@ export function useRequireAuth(redirectTo = "/login", requiredRole?: UserRole) {
   useEffect(() => {
     if (isLoading) return;
     if (!isAuthenticated) {
-      window.location.href = redirectTo;
+      // Preserve the intended destination so the login page can return the
+      // user here after a successful sign-in. Only append ?next= for
+      // in-app paths (never send arbitrary absolute URLs back).
+      let target = redirectTo;
+      if (typeof window !== "undefined" && redirectTo === "/login") {
+        const path = window.location.pathname + window.location.search;
+        if (path && path !== "/" && path !== "/login") {
+          target = `/login?next=${encodeURIComponent(path)}`;
+        }
+      }
+      window.location.href = target;
       return;
     }
     if (requiredRole && user && user.role !== requiredRole) {

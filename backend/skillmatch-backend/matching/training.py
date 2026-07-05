@@ -1,17 +1,31 @@
 """Reusable ranking-model training, shared by the CLI command and the admin
 'Retrain' endpoint.
 
-Trains a RandomForest over (candidate, job) pairs built from the seeded
-candidates and a representative job per role family. Features use the SAME
+Trains a RandomForest over (candidate, job) pairs. Features use the SAME
 ordering the live ranker consumes (``ranking_model.FEATURE_ORDER``) so the
-saved artifact lines up exactly with inference. TF-IDF similarity is computed
-in one batched fit (fast even for thousands of candidates).
+saved artifact lines up exactly with inference.
+
+Label source (in priority order):
+  1. Real signals -- Application.status (SHORTLISTED=1, REJECTED=0) plus
+     RecommendationFeedback.signal (UP=1, DOWN=0). These are the ground-truth
+     labels the Phase-7 retraining loop is meant to consume.
+  2. Synthetic fallback -- pairs against canonical JOB_SPECS labelled by
+     ``preferred_role`` vs. job title match (a signal that is *not* also a
+     ranker feature, so the model can't memorise its own input). Used when
+     there aren't enough real signals to train on alone.
+
+Both paths compute REAL SBERT semantic similarity (with graceful fallback
+to TF-IDF) so training-time features match inference-time features -- the
+old ``semantic_sim=0.0`` at train time was a train/serve skew bug.
 """
 from __future__ import annotations
 
+import logging
 import re
 
 from matching.ranking_model import FEATURE_ORDER, MODEL_PATH, reload_model
+
+log = logging.getLogger(__name__)
 
 # One representative job per IT role family (title, required-skill set).
 JOB_SPECS = [
@@ -29,15 +43,103 @@ JOB_SPECS = [
     ("Cloud Engineer",           {"aws", "azure", "terraform", "kubernetes", "docker"}),
 ]
 
+# Minimum real (positive, negative) counts to use the real-label path alone.
+MIN_REAL_LABELS = 40
 
-def train_ranking_model(samples: int = 800) -> dict:
+
+def _profile_meta(profile, resume_text):
+    skills = {s.lower() for s in profile.skills.values_list("name", flat=True)}
+    certs = [c for c in (profile.certifications or "").split(",")
+             if c.strip() and c.strip() != "None"]
+    yrs = [int(x) for x in re.findall(r"(\d+)\s*year", resume_text or "")]
+    return {
+        "sk": skills,
+        "cg": float(profile.cgpa or 0) / 4.0,
+        "int": 1 if "intern" in (resume_text or "") else 0,
+        "gh": 1 if profile.github_url else 0,
+        "cert": min(len(certs), 5) / 5.0,
+        "skn": min(len(skills), 20) / 20.0,
+        "exp": min((max(yrs) if yrs else 0) / 10.0, 1.0),
+        "pref": (profile.preferred_role or "").lower(),
+    }
+
+
+def _build_feature_row(meta, job_skills, job_title, tfidf_sim, semantic_sim):
+    overlap = len(meta["sk"] & job_skills) / len(job_skills) if job_skills else 0.0
+    pref_match = 1 if meta["pref"] and meta["pref"].split()[0] in job_title.lower() else 0
+    feats = {
+        "skill_overlap":   overlap,
+        "semantic_sim":    float(semantic_sim),
+        "tfidf_sim":       float(tfidf_sim),
+        "cgpa_norm":       meta["cg"],
+        "has_internship":  meta["int"],
+        "has_github":      meta["gh"],
+        "cert_count":      meta["cert"],
+        "skill_count":     meta["skn"],
+        "exp_years":       meta["exp"],
+        "preferred_match": pref_match,
+    }
+    return [feats[k] for k in FEATURE_ORDER]
+
+
+def _pairs_from_real_signals():
+    """Yield (user, job, label) tuples from persisted user signals."""
+    try:
+        from applications.models import Application, RecommendationFeedback
+    except Exception:
+        return
+    shortlisted = Application.objects.filter(
+        status=Application.Status.SHORTLISTED
+    ).select_related("candidate", "job").prefetch_related("job__required_skills")
+    for a in shortlisted:
+        yield a.candidate, a.job, 1
+    rejected = Application.objects.filter(
+        status=Application.Status.REJECTED
+    ).select_related("candidate", "job").prefetch_related("job__required_skills")
+    for a in rejected:
+        yield a.candidate, a.job, 0
+    up = RecommendationFeedback.objects.filter(
+        signal=RecommendationFeedback.Signal.UP
+    ).select_related("user", "job").prefetch_related("job__required_skills")
+    for fb in up:
+        yield fb.user, fb.job, 1
+    down = RecommendationFeedback.objects.filter(
+        signal=RecommendationFeedback.Signal.DOWN
+    ).select_related("user", "job").prefetch_related("job__required_skills")
+    for fb in down:
+        yield fb.user, fb.job, 0
+
+
+def _semantic_matrix(cand_texts, job_texts):
+    """Return (n_cand, n_job) SBERT cosine matrix, or None if unavailable."""
+    try:
+        from matching.engine.semantic import SentenceTransformerMatcher
+        import numpy as np
+        matcher = SentenceTransformerMatcher()
+        if matcher._get_model() is None:
+            return None
+        cand_vecs = np.asarray(matcher.embed_batch(cand_texts))
+        job_vecs = np.asarray(matcher.embed_batch(job_texts))
+        if cand_vecs.size == 0 or job_vecs.size == 0:
+            return None
+        return cand_vecs @ job_vecs.T
+    except Exception as exc:
+        log.warning("SBERT unavailable during training (%s); using TF-IDF for semantic_sim.", exc)
+        return None
+
+
+def train_ranking_model(samples=800):
     """Train, persist, and version the ranking model. Returns a metrics dict."""
     from accounts.models import CandidateProfile
     from sklearn.ensemble import RandomForestClassifier
     from sklearn.model_selection import train_test_split
-    from sklearn.metrics import accuracy_score, roc_auc_score
+    from sklearn.metrics import (
+        accuracy_score, roc_auc_score, precision_score,
+        recall_score, f1_score, confusion_matrix,
+    )
     from sklearn.feature_extraction.text import TfidfVectorizer
     from sklearn.metrics.pairwise import cosine_similarity
+    import numpy as np
     import joblib
 
     profiles = list(
@@ -47,85 +149,155 @@ def train_ranking_model(samples: int = 800) -> dict:
     if len(profiles) < 30:
         raise ValueError("Not enough candidates to train. Seed data first (seed_dataset_v3).")
 
-    job_texts = [t + " " + " ".join(s) for t, s in JOB_SPECS]
-
-    texts, meta = [], []
+    cand_meta = []
+    cand_texts = []
+    profile_by_user = {}
     for p in profiles:
         resume = p.user.resumes.first()
-        rt = ((resume.raw_text if resume else "") or "")[:4000].lower()
-        skills = {s.lower() for s in p.skills.values_list("name", flat=True)}
-        texts.append(rt + " " + " ".join(skills))
-        certs = [c for c in (p.certifications or "").split(",") if c.strip() and c.strip() != "None"]
-        yrs = [int(x) for x in re.findall(r"(\d+)\s*year", rt)]
-        meta.append({
-            "sk": skills,
-            "cg": float(p.cgpa or 0) / 4.0,
-            "int": 1 if "intern" in rt else 0,
-            "gh": 1 if p.github_url else 0,
-            "cert": min(len(certs), 5) / 5.0,
-            "skn": min(len(skills), 20) / 20.0,
-            "exp": min((max(yrs) if yrs else 0) / 10.0, 1.0),
-            "pref": (p.preferred_role or "").lower(),
-        })
+        rt = ((resume.raw_text if resume else "") or "")
+        m = _profile_meta(p, rt)
+        cand_meta.append(m)
+        cand_texts.append((rt[:4000].lower() + " " + " ".join(m["sk"])).strip())
+        profile_by_user[p.user_id] = (p, m, len(cand_meta) - 1)
 
-    vec = TfidfVectorizer(ngram_range=(1, 2), sublinear_tf=True, min_df=2, max_features=20000)
-    matrix = vec.fit_transform(texts + job_texts)
-    sim = cosine_similarity(matrix[: len(texts)], matrix[len(texts):])
+    spec_texts = [t + " " + " ".join(s) for t, s in JOB_SPECS]
+    spec_skill_sets = [s for _, s in JOB_SPECS]
+    spec_titles = [t for t, _ in JOB_SPECS]
 
-    X, y = [], []
-    for i, m in enumerate(meta):
-        for j, (title, js) in enumerate(JOB_SPECS):
-            overlap = len(m["sk"] & js) / len(js) if js else 0.0
-            if overlap >= 0.40:
+    vec = TfidfVectorizer(ngram_range=(1, 2), sublinear_tf=True,
+                          min_df=2, max_features=20000)
+    matrix = vec.fit_transform(cand_texts + spec_texts)
+    tfidf_c_x_spec = cosine_similarity(matrix[: len(cand_texts)],
+                                       matrix[len(cand_texts):])
+
+    sem_c_x_spec = _semantic_matrix(cand_texts, spec_texts)
+    used_semantic = sem_c_x_spec is not None
+    if not used_semantic:
+        sem_c_x_spec = tfidf_c_x_spec
+
+    # --- 1. Real-signal pairs ------------------------------------------------
+    real_X, real_y = [], []
+    real_used = 0
+    for user, job, label in _pairs_from_real_signals():
+        entry = profile_by_user.get(user.pk)
+        if not entry:
+            continue
+        _profile, meta, idx = entry
+        job_text = f"{job.title} {job.description or ''} " + " ".join(
+            job.required_skills.values_list("name", flat=True)
+        )
+        job_skills = {s.lower() for s in job.required_skills.values_list("name", flat=True)}
+        try:
+            cand_vec = vec.transform([cand_texts[idx]])
+            job_vec = vec.transform([job_text.lower()])
+            tf = float(cosine_similarity(cand_vec, job_vec)[0, 0])
+        except Exception:
+            tf = 0.0
+        if used_semantic:
+            try:
+                from matching.engine.semantic import SentenceTransformerMatcher
+                sm = SentenceTransformerMatcher()
+                sem = float(sm.similarity(cand_texts[idx], [job_text])[0])
+            except Exception:
+                sem = tf
+        else:
+            sem = tf
+        real_X.append(_build_feature_row(meta, job_skills, job.title, tf, sem))
+        real_y.append(label)
+        real_used += 1
+
+    pos_real = sum(real_y)
+    neg_real = len(real_y) - pos_real
+    have_enough_real = (pos_real >= MIN_REAL_LABELS and neg_real >= MIN_REAL_LABELS)
+
+    # --- 2. Synthetic pairs (non-circular label rule) -----------------------
+    # Positive: preferred_role prefix matches spec title AND text sim in top 33%.
+    # Negative: no preferred_role match AND text sim in bottom 33%.
+    # Neither condition references skill_overlap, so the label is not a
+    # tautology of feature 0 (as the old overlap>=0.40 rule was).
+    all_sims = tfidf_c_x_spec.flatten()
+    hi_thr = float(np.quantile(all_sims, 0.66))
+    lo_thr = float(np.quantile(all_sims, 0.33))
+
+    syn_X, syn_y = [], []
+    for i, meta in enumerate(cand_meta):
+        for j, title in enumerate(spec_titles):
+            tf = float(tfidf_c_x_spec[i, j])
+            sem = float(sem_c_x_spec[i, j])
+            pref = meta["pref"]
+            pref_match_title = bool(
+                pref and pref.split() and pref.split()[0] in title.lower()
+            )
+            if pref_match_title and tf >= hi_thr:
                 label = 1
-            elif overlap <= 0.12:
+            elif (not pref_match_title) and tf <= lo_thr:
                 label = 0
             else:
                 continue
-            pref_match = 1 if m["pref"] and m["pref"].split()[0] in title.lower() else 0
-            feats = {
-                "skill_overlap": overlap, "semantic_sim": 0.0, "tfidf_sim": float(sim[i, j]),
-                "cgpa_norm": m["cg"], "has_internship": m["int"], "has_github": m["gh"],
-                "cert_count": m["cert"], "skill_count": m["skn"], "exp_years": m["exp"],
-                "preferred_match": pref_match,
-            }
-            X.append([feats[k] for k in FEATURE_ORDER])
-            y.append(label)
+            syn_X.append(_build_feature_row(meta, spec_skill_sets[j], title, tf, sem))
+            syn_y.append(label)
+
+    # --- 3. Combine ---------------------------------------------------------
+    if have_enough_real:
+        X, y = real_X, real_y
+        label_source = "real"
+    else:
+        X = real_X + syn_X
+        y = real_y + syn_y
+        label_source = "synthetic" if not real_used else "real+synthetic"
 
     pos, neg = sum(y), len(y) - sum(y)
     if pos < 10 or neg < 10:
         raise ValueError(f"Too few labelled samples (pos={pos}, neg={neg}).")
 
-    X_tr, X_te, y_tr, y_te = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+    X_tr, X_te, y_tr, y_te = train_test_split(
+        X, y, test_size=0.2, random_state=42, stratify=y
+    )
     model = RandomForestClassifier(
         n_estimators=300, max_depth=12, min_samples_leaf=4,
         class_weight="balanced", random_state=42, n_jobs=-1,
     )
     model.fit(X_tr, y_tr)
-    acc = float(accuracy_score(y_te, model.predict(X_te)))
+
+    y_pred = model.predict(X_te)
+    acc = float(accuracy_score(y_te, y_pred))
     try:
         auc = float(roc_auc_score(y_te, model.predict_proba(X_te)[:, 1]))
     except ValueError:
         auc = 0.0
-    importances = {k: round(float(v), 4) for k, v in zip(FEATURE_ORDER, model.feature_importances_)}
+    prec = float(precision_score(y_te, y_pred, zero_division=0))
+    rec = float(recall_score(y_te, y_pred, zero_division=0))
+    f1 = float(f1_score(y_te, y_pred, zero_division=0))
+    tn, fp, fn, tp = (int(v) for v in confusion_matrix(y_te, y_pred).ravel())
+    importances = {k: round(float(v), 4)
+                   for k, v in zip(FEATURE_ORDER, model.feature_importances_)}
 
     MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
     metrics = {
-        "accuracy": round(acc, 4), "auc": round(auc, 4),
-        "n_samples": len(y), "n_candidates": len(profiles),
-        "positives": pos, "negatives": neg, "feature_importances": importances,
+        "accuracy":     round(acc, 4),
+        "auc":          round(auc, 4),
+        "precision":    round(prec, 4),
+        "recall":       round(rec, 4),
+        "f1":           round(f1, 4),
+        "confusion":    {"tn": tn, "fp": fp, "fn": fn, "tp": tp},
+        "n_samples":    len(y),
+        "n_candidates": len(profiles),
+        "positives":    pos,
+        "negatives":    neg,
+        "feature_importances": importances,
+        "label_source":    label_source,
+        "real_pairs_used": real_used,
+        "used_semantic":   used_semantic,
     }
 
-    # Determine the next version number (best-effort; table may be unmigrated).
     version = None
     try:
         from matching.models import ModelVersion
         last = ModelVersion.objects.order_by("-version").first()
         version = (last.version + 1) if last else 1
-    except Exception:  # noqa: BLE001
+    except Exception:
         version = None
 
-    # Save the live artifact + a per-version copy so rollback can restore it.
     joblib.dump(model, MODEL_PATH)
     if version is not None:
         joblib.dump(model, MODEL_PATH.parent / f"ranker_v{version}.joblib")
@@ -135,18 +307,23 @@ def train_ranking_model(samples: int = 800) -> dict:
         try:
             from matching.models import ModelVersion
             ModelVersion.objects.update(is_active=False)
-            ModelVersion.objects.create(version=version, is_active=True, **metrics)
-        except Exception:  # noqa: BLE001
+            ModelVersion.objects.create(version=version, is_active=True, **{
+                k: v for k, v in metrics.items()
+                if k in {
+                    "accuracy", "auc", "n_samples", "n_candidates",
+                    "positives", "negatives", "feature_importances",
+                }
+            })
+        except Exception:
             version = None
     metrics["version"] = version
     return metrics
 
 
-def rollback_to_version(version: int) -> dict:
+def rollback_to_version(version):
     """Activate a previously-trained model version by restoring its artifact."""
     import shutil
     from matching.models import ModelVersion
-
     src = MODEL_PATH.parent / f"ranker_v{version}.joblib"
     if not src.exists():
         raise ValueError(f"No saved artifact for version {version} (it predates per-version saving).")

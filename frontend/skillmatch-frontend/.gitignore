@@ -6,3 +6,7 @@
 *.pem
 npm-debug.log*
 .env*.local
+
+# Playwright artifacts
+playwright-report/
+test-results/

@@ -111,3 +111,135 @@ class MyProfileView(APIView):
         # The frontend client sends PUT for profile updates; treat it as a
         # lenient full update (same validation path as PATCH).
         return self.patch(request)
+
+
+# ─── Password reset (forgot / reset) ────────────────────────────────────────
+
+from django.contrib.auth.tokens import PasswordResetTokenGenerator
+from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
+from django.utils.encoding import force_bytes, force_str
+from django.core.mail import send_mail
+from django.conf import settings as django_settings
+from rest_framework import serializers as drf_serializers
+
+
+password_reset_token = PasswordResetTokenGenerator()
+
+
+class PasswordResetRequestView(APIView):
+    """POST /api/auth/password-reset/request/  {"email": "..."}
+
+    Emails the user a signed reset link. Always returns 200 even if the
+    address is unknown, so an attacker can't enumerate registered accounts.
+    """
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        email = (request.data or {}).get("email", "").strip().lower()
+        if not email:
+            return Response({"detail": "Email required."}, status=400)
+        try:
+            user = User.objects.get(email=email)
+        except User.DoesNotExist:
+            # Silent success — see docstring.
+            return Response({"detail": "If an account exists, a reset link has been sent."})
+        uid = urlsafe_base64_encode(force_bytes(user.pk))
+        token = password_reset_token.make_token(user)
+        base = getattr(django_settings, "FRONTEND_URL", "http://localhost:3000")
+        link = f"{base}/reset-password?uid={uid}&token={token}"
+        send_mail(
+            subject="SkillMatch Nepal password reset",
+            message=(
+                f"Hi {user.full_name or 'there'},\n\n"
+                f"Reset your SkillMatch password using this link (valid for a few hours):\n\n{link}\n\n"
+                f"If you didn't request this, you can safely ignore this email."
+            ),
+            from_email=getattr(django_settings, "DEFAULT_FROM_EMAIL", "noreply@skillmatch.local"),
+            recipient_list=[email],
+            fail_silently=True,
+        )
+        return Response({"detail": "If an account exists, a reset link has been sent."})
+
+
+class PasswordResetConfirmSerializer(drf_serializers.Serializer):
+    uid = drf_serializers.CharField()
+    token = drf_serializers.CharField()
+    new_password = drf_serializers.CharField(min_length=8)
+
+    def validate(self, attrs):
+        try:
+            uid = force_str(urlsafe_base64_decode(attrs["uid"]))
+            user = User.objects.get(pk=uid)
+        except (ValueError, TypeError, User.DoesNotExist):
+            raise drf_serializers.ValidationError({"uid": "Invalid link."})
+        if not password_reset_token.check_token(user, attrs["token"]):
+            raise drf_serializers.ValidationError({"token": "Link has expired or is invalid."})
+        attrs["user"] = user
+        return attrs
+
+
+class PasswordResetConfirmView(APIView):
+    """POST /api/auth/password-reset/confirm/ {"uid","token","new_password"}"""
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        ser = PasswordResetConfirmSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        user = ser.validated_data["user"]
+        user.set_password(ser.validated_data["new_password"])
+        user.save(update_fields=["password"])
+        return Response({"detail": "Password updated. You can now log in."})
+
+
+# ─── Email verification (send / confirm) ────────────────────────────────────
+
+class SendVerificationEmailView(APIView):
+    """POST /api/auth/verify-email/send/  — sends the current user a verify link.
+
+    No-op (still returns 200) if the user is already verified.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        user = request.user
+        if getattr(user, "email_verified", False):
+            return Response({"detail": "Email is already verified."})
+        uid = urlsafe_base64_encode(force_bytes(user.pk))
+        token = password_reset_token.make_token(user)  # same generator; disposable
+        base = getattr(django_settings, "FRONTEND_URL", "http://localhost:3000")
+        link = f"{base}/verify-email?uid={uid}&token={token}"
+        send_mail(
+            subject="Verify your SkillMatch Nepal email",
+            message=(
+                f"Hi {user.full_name or 'there'},\n\n"
+                f"Confirm your email address by clicking this link:\n\n{link}\n\n"
+                f"If you didn't sign up, you can safely ignore this email."
+            ),
+            from_email=getattr(django_settings, "DEFAULT_FROM_EMAIL", "noreply@skillmatch.local"),
+            recipient_list=[user.email],
+            fail_silently=True,
+        )
+        return Response({"detail": "Verification email sent."})
+
+
+class VerifyEmailConfirmView(APIView):
+    """POST /api/auth/verify-email/confirm/ {"uid","token"}
+
+    Sets `User.email_verified = True` and returns the updated user.
+    """
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        uid_raw = (request.data or {}).get("uid", "")
+        token = (request.data or {}).get("token", "")
+        try:
+            uid = force_str(urlsafe_base64_decode(uid_raw))
+            user = User.objects.get(pk=uid)
+        except (ValueError, TypeError, User.DoesNotExist):
+            return Response({"detail": "Invalid link."}, status=400)
+        if not password_reset_token.check_token(user, token):
+            return Response({"detail": "Link has expired or is invalid."}, status=400)
+        if hasattr(user, "email_verified"):
+            user.email_verified = True
+            user.save(update_fields=["email_verified"])
+        return Response({"detail": "Email verified.", "email": user.email})

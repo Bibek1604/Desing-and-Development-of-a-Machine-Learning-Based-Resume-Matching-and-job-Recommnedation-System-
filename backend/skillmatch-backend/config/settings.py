@@ -154,6 +154,12 @@ SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(minutes=60),
     "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
     "AUTH_HEADER_TYPES": ("Bearer",),
+    # Rotate refresh tokens on every /auth/refresh/ so a stolen refresh
+    # becomes useless as soon as the legitimate user next refreshes.
+    "ROTATE_REFRESH_TOKENS": True,
+    # BLACKLIST_AFTER_ROTATION requires the token_blacklist app + its
+    # migrations. Left off by default; enable when blacklist is wired.
+    "BLACKLIST_AFTER_ROTATION": False,
 }
 
 SPECTACULAR_SETTINGS = {

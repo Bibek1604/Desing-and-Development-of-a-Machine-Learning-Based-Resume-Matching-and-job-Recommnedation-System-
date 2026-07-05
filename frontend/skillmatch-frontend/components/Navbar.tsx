@@ -9,11 +9,12 @@ import NotificationBell from "@/components/NotificationBell";
 import Logo from "@/components/Logo";
 
 const candidateLinks = [
-  { href: "/recommended", label: "Recommended" },
-  { href: "/jobs",        label: "All Jobs" },
-  { href: "/dashboard",   label: "Dashboard" },
+  { href: "/recommended",  label: "Recommended" },
+  { href: "/jobs",         label: "All Jobs" },
+  { href: "/saved",        label: "Saved" },
+  { href: "/dashboard",    label: "Dashboard" },
   { href: "/applications", label: "Applications" },
-  { href: "/profile",     label: "Profile" },
+  { href: "/profile",      label: "Profile" },
 ];
 
 const employerLinks = [

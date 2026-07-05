@@ -4,6 +4,8 @@ from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 from .views import (
     RegisterView, MeView, MyProfileView, DeleteAccountView,
     AvatarUploadView, LogoUploadView,
+    PasswordResetRequestView, PasswordResetConfirmView,
+    SendVerificationEmailView, VerifyEmailConfirmView,
 )
 
 urlpatterns = [
@@ -17,4 +19,10 @@ urlpatterns = [
     path("profile/", MyProfileView.as_view(), name="my-profile"),
     path("avatar/", AvatarUploadView.as_view(), name="avatar-upload"),
     path("logo/", LogoUploadView.as_view(), name="logo-upload"),
+    # Password reset (request + confirm)
+    path("password-reset/request/", PasswordResetRequestView.as_view(), name="password-reset-request"),
+    path("password-reset/confirm/", PasswordResetConfirmView.as_view(), name="password-reset-confirm"),
+    # Email verification (send + confirm)
+    path("verify-email/send/",    SendVerificationEmailView.as_view(), name="verify-email-send"),
+    path("verify-email/confirm/", VerifyEmailConfirmView.as_view(),    name="verify-email-confirm"),
 ]

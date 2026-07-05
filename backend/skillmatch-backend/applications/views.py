@@ -7,8 +7,8 @@ from rest_framework.views import APIView
 
 from common.permissions import IsCandidate
 from matching.services import score_candidate_for_job
-from .models import Application, RecommendationFeedback
-from .serializers import ApplicationSerializer, FeedbackSerializer
+from .models import Application, RecommendationFeedback, SavedJob
+from .serializers import ApplicationSerializer, FeedbackSerializer, SavedJobSerializer
 
 logger = logging.getLogger("skillmatch.api")
 
@@ -25,7 +25,6 @@ class ApplicationViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         user = self.request.user
         if user.is_authenticated and user.is_employer:
-            # Employers see applications to their own jobs.
             return Application.objects.filter(job__employer=user).select_related("job", "candidate")
         return Application.objects.filter(candidate=user).select_related("job")
 
@@ -33,19 +32,14 @@ class ApplicationViewSet(viewsets.ModelViewSet):
         job = serializer.validated_data["job"]
         if Application.objects.filter(candidate=self.request.user, job=job).exists():
             raise ValidationError("You have already applied to this job.")
-        # A scoring failure must not block the application itself — record the
-        # application with a zero score and log the problem for later backfill.
         try:
             score = score_candidate_for_job(self.request.user, job)
         except Exception as exc:  # noqa: BLE001
-            logger.error(
-                "score_candidate_for_job failed (job %s)", job.pk, exc_info=exc
-            )
+            logger.error("score_candidate_for_job failed (job %s)", job.pk, exc_info=exc)
             score = 0
         serializer.save(candidate=self.request.user, match_score=score)
 
     def perform_update(self, serializer):
-        """Let the job's employer move an applicant through the pipeline."""
         instance = serializer.instance
         new_status = self.request.data.get("status")
         user = self.request.user
@@ -58,12 +52,29 @@ class ApplicationViewSet(viewsets.ModelViewSet):
             serializer.save()
 
 
-class FeedbackView(APIView):
-    """POST /api/feedback/  — thumbs up/down on a recommended job.
+class SavedJobViewSet(viewsets.ModelViewSet):
+    """Candidate bookmarks. GET/POST/DELETE only. Each user sees only their own list."""
 
-    Upserts one feedback row per (user, job); re-submitting flips the signal.
-    These rows are the labelled signal the retraining loop consumes.
-    """
+    serializer_class = SavedJobSerializer
+    http_method_names = ["get", "post", "delete", "head", "options"]
+    permission_classes = [permissions.IsAuthenticated, IsCandidate]
+
+    def get_queryset(self):
+        return (
+            SavedJob.objects
+            .filter(user=self.request.user)
+            .select_related("job")
+            .prefetch_related("job__required_skills")
+        )
+
+    def perform_create(self, serializer):
+        job = serializer.validated_data["job"]
+        obj, _created = SavedJob.objects.get_or_create(user=self.request.user, job=job)
+        serializer.instance = obj
+
+
+class FeedbackView(APIView):
+    """POST /api/feedback/  — thumbs up/down on a recommended job."""
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request):

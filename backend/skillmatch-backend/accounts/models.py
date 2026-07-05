@@ -23,6 +23,10 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)
+    email_verified = models.BooleanField(
+        default=False,
+        help_text="Set when the user confirms their address via the verification link.",
+    )
     date_joined = models.DateTimeField(default=timezone.now)
 
     objects = UserManager()
@@ -196,5 +200,5 @@ class CareerRecommendation(models.Model):
     created_at        = models.DateTimeField(auto_now_add=True)
     updated_at        = models.DateTimeField(auto_now=True)
 
-    def __str__(self):
-        return f"CareerRec<{self.user.email}  top={self.top_role}>"
+    def __str__(self):        return f"CareerRec<{self.user.email}  top={self.top_role}>"
+
