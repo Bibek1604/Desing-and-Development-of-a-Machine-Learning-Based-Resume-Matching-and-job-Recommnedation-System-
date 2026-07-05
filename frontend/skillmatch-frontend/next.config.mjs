@@ -1,10 +1,10 @@
 /** @type {import('next').NextConfig} */
 
 // Security headers applied to every response. The CSP allows the Next.js
-// dev overlay (`'unsafe-eval'` / `'unsafe-inline'`) so hot-reload keeps
-// working locally; those two directives are the standard trade-off the
-// Next.js docs recommend for App-Router dev. `connect-src` must include the
-// backend origin the client talks to (defaults to localhost:8000).
+// dev overlay ('unsafe-eval' / 'unsafe-inline') so hot-reload keeps working
+// locally; those two directives are the standard trade-off the Next.js docs
+// recommend for App-Router dev. connect-src must include the backend origin
+// (defaults to localhost:8000 via NEXT_PUBLIC_API_URL).
 const API_ORIGIN = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 const SECURITY_HEADERS = [

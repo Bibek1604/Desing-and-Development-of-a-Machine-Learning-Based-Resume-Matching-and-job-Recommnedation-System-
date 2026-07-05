@@ -188,10 +188,11 @@ export function homeForRole(role: UserRole | undefined): string {
   return "/dashboard";
 }
 export interface MeResponse {
-  id:        number;
-  email:     string;
-  full_name: string;
-  role:      UserRole;
+  id:              number;
+  email:           string;
+  full_name:       string;
+  role:            UserRole;
+  email_verified?: boolean;
 }
 export interface ProfileResponse {
   id:                 number;
@@ -523,6 +524,37 @@ export const feedback = {
     request<{ id: number; job: number; signal: string }>(
       "/api/feedback/", "POST", { job, signal, score, comment },
     ),
+};
+
+// ── Saved jobs (bookmarks) ──────────────────────────────────────────────────
+export interface SavedJob {
+  id:          number;
+  job:         number;
+  job_detail?: Job;
+  created_at:  string;
+}
+
+export const savedJobs = {
+  list: () =>
+    request<SavedJob[] | { results: SavedJob[]; count: number }>("/api/saved-jobs/"),
+  save: (jobId: number) =>
+    request<SavedJob>("/api/saved-jobs/", "POST", { job: jobId }),
+  unsave: (id: number) =>
+    request<void>(`/api/saved-jobs/${id}/`, "DELETE"),
+};
+
+// ── Password reset & email verification ────────────────────────────────────
+export const passwordReset = {
+  request: (email: string) =>
+    request<{ detail: string }>("/api/auth/password-reset/request/", "POST", { email }),
+  confirm: (uid: string, token: string, new_password: string) =>
+    request<{ detail: string }>("/api/auth/password-reset/confirm/", "POST", { uid, token, new_password }),
+};
+
+export const emailVerification = {
+  send: () => request<{ detail: string }>("/api/auth/verify-email/send/", "POST", {}),
+  confirm: (uid: string, token: string) =>
+    request<{ detail: string; email?: string }>("/api/auth/verify-email/confirm/", "POST", { uid, token }),
 };
 
 // ── Saved jobs (bookmarks) ──────────────────────────────────────────────────
