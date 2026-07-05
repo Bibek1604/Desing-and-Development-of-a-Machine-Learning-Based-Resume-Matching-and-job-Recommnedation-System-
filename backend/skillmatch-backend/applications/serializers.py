@@ -1,7 +1,7 @@
 from rest_framework import serializers
 
 from jobs.serializers import JobSerializer
-from .models import Application, RecommendationFeedback
+from .models import Application, RecommendationFeedback, SavedJob
 
 
 class ApplicationSerializer(serializers.ModelSerializer):
@@ -39,4 +39,13 @@ class FeedbackSerializer(serializers.ModelSerializer):
     class Meta:
         model = RecommendationFeedback
         fields = ("id", "job", "signal", "score", "comment", "created_at")
+        read_only_fields = ("id", "created_at")
+
+
+class SavedJobSerializer(serializers.ModelSerializer):
+    job_detail = JobSerializer(source="job", read_only=True)
+
+    class Meta:
+        model = SavedJob
+        fields = ("id", "job", "job_detail", "created_at")
         read_only_fields = ("id", "created_at")

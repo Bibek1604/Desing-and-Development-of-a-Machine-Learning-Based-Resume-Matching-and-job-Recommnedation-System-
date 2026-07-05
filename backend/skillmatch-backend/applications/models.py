@@ -59,3 +59,27 @@ class RecommendationFeedback(models.Model):
 
     def __str__(self):
         return f"{self.user.email} {self.signal} job#{self.job_id}"
+
+
+class SavedJob(models.Model):
+    """A candidate bookmarking a job for later.
+
+    Distinct from Application: saving doesn't count as applying and doesn't
+    reveal the candidate to the employer. Powers the /saved page on the
+    candidate frontend and the heart-icon on job cards.
+    """
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="saved_jobs"
+    )
+    job = models.ForeignKey(
+        "jobs.Job", on_delete=models.CASCADE, related_name="saved_by"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("-created_at",)
+        unique_together = ("user", "job")
+
+    def __str__(self):
+        return f"{self.user.email} saved job#{self.job_id}"

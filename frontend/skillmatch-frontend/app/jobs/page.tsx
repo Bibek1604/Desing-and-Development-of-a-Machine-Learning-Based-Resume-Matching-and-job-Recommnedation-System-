@@ -5,7 +5,8 @@ import { Search, SlidersHorizontal, ChevronDown, Briefcase, MapPin, Wallet } fro
 import { useAuth } from "@/context/AuthContext";
 import {
   jobs as jobsApi, matching, applications as applicationsApi, feedback as feedbackApi,
-  humanizeError, type Job, type JobMatch, type Application,
+  savedJobs as savedApi, humanizeError, type Job, type JobMatch, type Application,
+  type SavedJob,
 } from "@/lib/api";
 import { useToast } from "@/context/ToastContext";
 import ErrorState from "@/components/ErrorState";
@@ -31,7 +32,9 @@ export default function AllJobsPage() {
   const [gapJobId,   setGapJobId]   = useState<number | null>(null);
   const [appliedIds, setAppliedIds] = useState<Set<number>>(new Set());
   const [applyingId, setApplyingId] = useState<number | null>(null);
-  const [applyFor,   setApplyFor]   = useState<Job | null>(null);   // Job the modal is currently open for
+  const [applyFor,   setApplyFor]   = useState<Job | null>(null);
+  // Map jobId -> savedRowId so we can DELETE the right saved-job row on unsave.
+  const [savedMap,   setSavedMap]   = useState<Map<number, number>>(new Map());
   const toast = useToast();
 
   const fetchAll = useCallback(() => {
@@ -72,7 +75,32 @@ export default function AllJobsPage() {
         setAppliedIds(new Set(items.map((a) => a.job)));
       })
       .catch(() => {});
+    savedApi.list()
+      .then((r) => {
+        const items: SavedJob[] = Array.isArray(r) ? r : r.results ?? [];
+        setSavedMap(new Map(items.map((s) => [s.job, s.id])));
+      })
+      .catch(() => {});
   }, [isAuthenticated, isCandidate]);
+
+  async function toggleSave(jobId: number) {
+    const existingRowId = savedMap.get(jobId);
+    try {
+      if (existingRowId != null) {
+        await savedApi.unsave(existingRowId);
+        setSavedMap((prev) => {
+          const next = new Map(prev);
+          next.delete(jobId);
+          return next;
+        });
+      } else {
+        const created = await savedApi.save(jobId);
+        setSavedMap((prev) => new Map(prev).set(jobId, created.id));
+      }
+    } catch (err) {
+      toast.error(humanizeError(err));
+    }
+  }
 
   // Instead of applying immediately, open the ApplyModal so the candidate
   // can supply an optional cover note. The actual POST happens in
@@ -137,6 +165,8 @@ export default function AllJobsPage() {
         onViewGap={isAuthenticated && isCandidate ? setGapJobId : undefined}
         onApply={isAuthenticated && isCandidate ? openApply : undefined}
         onFeedback={isAuthenticated && isCandidate ? handleFeedback : undefined}
+        onToggleSave={isAuthenticated && isCandidate ? toggleSave : undefined}
+        saved={savedMap.has(job.id)}
         applied={appliedIds.has(job.id)}
         applying={applyingId === job.id}
       />

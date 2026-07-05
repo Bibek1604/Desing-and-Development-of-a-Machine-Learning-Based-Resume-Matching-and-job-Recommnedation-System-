@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import {
   X, TrendingUp, MapPin, Clock, Check, Wrench, ScrollText, CalendarDays, Send,
-  ThumbsUp, ThumbsDown,
+  ThumbsUp, ThumbsDown, Bookmark,
 } from "lucide-react";
 import { matching, humanizeError, type Job } from "@/lib/api";
 import Spinner from "@/components/Spinner";
@@ -43,11 +43,16 @@ export interface JobCardProps {
   onViewGap?: (jobId: number) => void;
   onApply?: (jobId: number) => void;
   onFeedback?: (jobId: number, signal: "up" | "down", score: number) => void;
+  onToggleSave?: (jobId: number) => void;
+  saved?: boolean;
   applied?: boolean;
   applying?: boolean;
 }
 
-export function JobCard({ job, score, matchedSkills, onViewGap, onApply, onFeedback, applied, applying }: JobCardProps) {
+export function JobCard({
+  job, score, matchedSkills, onViewGap, onApply, onFeedback, onToggleSave,
+  saved, applied, applying,
+}: JobCardProps) {
   const [fb, setFb] = useState<"up" | "down" | null>(null);
   function sendFb(signal: "up" | "down") {
     setFb(signal);
@@ -73,7 +78,20 @@ export function JobCard({ job, score, matchedSkills, onViewGap, onApply, onFeedb
             </div>
           </div>
         </div>
-        {score != null && <span className={scoreBadgeClass(score)}>{score}%</span>}
+        <div className="flex items-center gap-1.5 shrink-0">
+          {onToggleSave && (
+            <button
+              type="button"
+              onClick={() => onToggleSave(job.id)}
+              aria-label={saved ? "Remove from saved jobs" : "Save this job"}
+              className={`p-1 rounded transition-colors ${saved ? "text-brand-600" : "text-slate-400 hover:text-brand-600"}`}
+              title={saved ? "Saved" : "Save for later"}
+            >
+              <Bookmark size={14} fill={saved ? "currentColor" : "none"} />
+            </button>
+          )}
+          {score != null && <span className={scoreBadgeClass(score)}>{score}%</span>}
+        </div>
       </div>
 
       <div className="flex flex-wrap gap-1.5">

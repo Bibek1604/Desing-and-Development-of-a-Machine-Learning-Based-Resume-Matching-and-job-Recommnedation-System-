@@ -7,8 +7,8 @@ from rest_framework.views import APIView
 
 from common.permissions import IsCandidate
 from matching.services import score_candidate_for_job
-from .models import Application, RecommendationFeedback
-from .serializers import ApplicationSerializer, FeedbackSerializer
+from .models import Application, RecommendationFeedback, SavedJob
+from .serializers import ApplicationSerializer, FeedbackSerializer, SavedJobSerializer
 
 logger = logging.getLogger("skillmatch.api")
 
@@ -56,6 +56,28 @@ class ApplicationViewSet(viewsets.ModelViewSet):
             serializer.save(status=new_status)
         else:
             serializer.save()
+
+
+class SavedJobViewSet(viewsets.ModelViewSet):
+    """Candidate bookmarks. GET/POST/DELETE only — no PATCH (a bookmark is
+    all-or-nothing). Each user sees only their own list."""
+
+    serializer_class = SavedJobSerializer
+    http_method_names = ["get", "post", "delete", "head", "options"]
+    permission_classes = [permissions.IsAuthenticated, IsCandidate]
+
+    def get_queryset(self):
+        return (
+            SavedJob.objects
+            .filter(user=self.request.user)
+            .select_related("job")
+            .prefetch_related("job__required_skills")
+        )
+
+    def perform_create(self, serializer):
+        job = serializer.validated_data["job"]
+        obj, _created = SavedJob.objects.get_or_create(user=self.request.user, job=job)
+        serializer.instance = obj  # so the response body reflects the row
 
 
 class FeedbackView(APIView):
