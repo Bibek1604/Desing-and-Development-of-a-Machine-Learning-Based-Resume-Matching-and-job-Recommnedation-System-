@@ -48,41 +48,48 @@ function Field({ label, required, children }: {
 // ─────────────────────────────────────────────────────────────────────────────
 // Post a Job
 // ─────────────────────────────────────────────────────────────────────────────
-function PostJobForm({ initialCompany, onPosted }: {
+function PostJobForm({ initialCompany, initialJob, mode = "create", onPosted, onCancel }: {
   initialCompany?: string;
+  initialJob?: Job;                  // supplied in edit mode
+  mode?: "create" | "edit";          // create posts a new job, edit PATCHes an existing one
   onPosted: (job: Job) => void;
+  onCancel?: () => void;             // shown as a "Cancel" button in edit mode
 }) {
+  const isEdit = mode === "edit" && initialJob != null;
   const toast = useToast();
-  const [title,        setTitle]        = useState("");
-  const [company,      setCompany]      = useState(initialCompany ?? "");
-  const [location,     setLocation]     = useState("Kathmandu, Nepal");
-  const [jobType,      setJobType]      = useState("full_time");
-  const [description,  setDescription]  = useState("");
-  const [requirements, setRequirements] = useState("");
-  const [salaryMin,    setSalaryMin]    = useState("");
-  const [salaryMax,    setSalaryMax]    = useState("");
+  const [title,        setTitle]        = useState(initialJob?.title ?? "");
+  const [company,      setCompany]      = useState(initialJob?.company ?? initialCompany ?? "");
+  const [location,     setLocation]     = useState(initialJob?.location ?? "Kathmandu, Nepal");
+  const [jobType,      setJobType]      = useState(initialJob?.job_type ?? "full_time");
+  const [description,  setDescription]  = useState(initialJob?.description ?? "");
+  const [requirements, setRequirements] = useState(initialJob?.requirements ?? "");
+  const [salaryMin,    setSalaryMin]    = useState(initialJob?.salary_min ? String(initialJob.salary_min) : "");
+  const [salaryMax,    setSalaryMax]    = useState(initialJob?.salary_max ? String(initialJob.salary_max) : "");
   const [loading,      setLoading]      = useState(false);
   const [error,        setError]        = useState("");
 
   // Keep company in sync once the profile loads (only if untouched).
   useEffect(() => {
-    if (initialCompany) setCompany(prev => prev || initialCompany);
-  }, [initialCompany]);
+    if (!isEdit && initialCompany) setCompany(prev => prev || initialCompany);
+  }, [initialCompany, isEdit]);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setError("");
     setLoading(true);
     try {
-      const job = await jobsApi.create({
+      const payload = {
         title, company, location,
         job_type: jobType,
         description, requirements,
         salary_min: salaryMin ? Number(salaryMin) : undefined,
         salary_max: salaryMax ? Number(salaryMax) : undefined,
-      });
+      };
+      const job = isEdit
+        ? await jobsApi.update(initialJob!.id, payload)
+        : await jobsApi.create(payload);
       onPosted(job);
-      toast.success("Job posted successfully!");
+      toast.success(isEdit ? "Job updated" : "Job posted successfully!");
     } catch (err) {
       const msg = humanizeError(err);
       setError(msg);

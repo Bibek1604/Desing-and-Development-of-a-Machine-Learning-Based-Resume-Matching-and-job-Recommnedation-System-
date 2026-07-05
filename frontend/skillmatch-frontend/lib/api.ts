@@ -37,7 +37,10 @@ async function tryRefresh(): Promise<boolean> {
     });
     if (!res.ok) { tokens.clear(); return false; }
     const data = await res.json();
-    tokens.set(data.access, refresh);
+    // Honour refresh-token rotation: if the backend returns a fresh refresh
+    // token (SIMPLE_JWT.ROTATE_REFRESH_TOKENS=True), use it instead of the old
+    // one so stolen refresh tokens expire on next legitimate refresh.
+    tokens.set(data.access, data.refresh || refresh);
     return true;
   } catch {
     tokens.clear();

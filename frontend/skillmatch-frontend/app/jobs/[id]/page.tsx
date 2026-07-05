@@ -16,6 +16,7 @@ import { useToast } from "@/context/ToastContext";
 import ErrorState from "@/components/ErrorState";
 import Spinner from "@/components/Spinner";
 import CompanyLogo from "@/components/CompanyLogo";
+import ApplyModal from "@/components/jobs/ApplyModal";
 import { scoreBadgeClass } from "@/lib/score";
 
 const JOB_TYPE_COLORS: Record<string, string> = {
@@ -45,9 +46,10 @@ export default function JobDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error,   setError]   = useState<unknown>(null);
 
-  const [applied,  setApplied]  = useState(false);
-  const [applying, setApplying] = useState(false);
-  const [match,    setMatch]    = useState<ExplainMatch | null>(null);
+  const [applied,   setApplied]   = useState(false);
+  const [applying,  setApplying]  = useState(false);
+  const [match,     setMatch]     = useState<ExplainMatch | null>(null);
+  const [applyOpen, setApplyOpen] = useState(false);
 
   const load = useCallback(() => {
     if (!jobId) return;
@@ -75,11 +77,12 @@ export default function JobDetailPage() {
       .catch(() => setMatch(null));
   }, [isCandidate, jobId]);
 
-  async function handleApply() {
+  async function submitApplication(coverNote: string) {
     setApplying(true);
     try {
-      await applicationsApi.create(jobId);
+      await applicationsApi.create(jobId, coverNote);
       setApplied(true);
+      setApplyOpen(false);
       toast.success("Application submitted!");
     } catch (err) {
       toast.error(humanizeError(err));
@@ -174,7 +177,7 @@ export default function JobDetailPage() {
                   <Check size={15} /> Applied
                 </span>
               ) : (
-                <button onClick={handleApply} disabled={applying || !job.is_active} className="btn-primary !py-2.5 !px-6">
+                <button onClick={() => setApplyOpen(true)} disabled={applying || !job.is_active} className="btn-primary !py-2.5 !px-6">
                   {applying ? <><Spinner size={15} /> Applying…</> : <><Send size={15} /> Apply now</>}
                 </button>
               )
@@ -234,12 +237,19 @@ export default function JobDetailPage() {
         {/* Bottom apply for convenience */}
         {isCandidate && !applied && job.is_active && (
           <div className="flex justify-end">
-            <button onClick={handleApply} disabled={applying} className="btn-primary !py-2.5 !px-6">
+            <button onClick={() => setApplyOpen(true)} disabled={applying} className="btn-primary !py-2.5 !px-6">
               {applying ? <><Spinner size={15} /> Applying…</> : <><Send size={15} /> Apply now</>}
             </button>
           </div>
         )}
       </div>
+
+      <ApplyModal
+        job={applyOpen ? job : null}
+        submitting={applying}
+        onCancel={() => setApplyOpen(false)}
+        onSubmit={submitApplication}
+      />
     </div>
   );
 }

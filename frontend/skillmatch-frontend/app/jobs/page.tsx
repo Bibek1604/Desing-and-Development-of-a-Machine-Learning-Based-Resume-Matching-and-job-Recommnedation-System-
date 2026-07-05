@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
-import { Search, SlidersHorizontal, ChevronDown, Briefcase } from "lucide-react";
+import { useEffect, useState, useCallback, useMemo } from "react";
+import { Search, SlidersHorizontal, ChevronDown, Briefcase, MapPin, Wallet } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import {
   jobs as jobsApi, matching, applications as applicationsApi, feedback as feedbackApi,
@@ -11,6 +11,7 @@ import { useToast } from "@/context/ToastContext";
 import ErrorState from "@/components/ErrorState";
 import PageHeader from "@/components/PageHeader";
 import { JobCard, SkeletonCard, GapDrawer } from "@/components/jobs/JobCard";
+import ApplyModal from "@/components/jobs/ApplyModal";
 
 export default function AllJobsPage() {
   const { isAuthenticated, user } = useAuth();
@@ -20,6 +21,8 @@ export default function AllJobsPage() {
   const [recMatches, setRecMatches] = useState<JobMatch[]>([]);
   const [search,     setSearch]     = useState("");
   const [jobType,    setJobType]    = useState("");
+  const [location,   setLocation]   = useState("");
+  const [minSalary,  setMinSalary]  = useState<string>("");
   const [page,       setPage]       = useState(1);
   const [total,      setTotal]      = useState(0);
   const [numPages,   setNumPages]   = useState(1);
@@ -28,6 +31,7 @@ export default function AllJobsPage() {
   const [gapJobId,   setGapJobId]   = useState<number | null>(null);
   const [appliedIds, setAppliedIds] = useState<Set<number>>(new Set());
   const [applyingId, setApplyingId] = useState<number | null>(null);
+  const [applyFor,   setApplyFor]   = useState<Job | null>(null);   // Job the modal is currently open for
   const toast = useToast();
 
   const fetchAll = useCallback(() => {
@@ -70,12 +74,22 @@ export default function AllJobsPage() {
       .catch(() => {});
   }, [isAuthenticated, isCandidate]);
 
-  async function handleApply(jobId: number) {
-    setApplyingId(jobId);
+  // Instead of applying immediately, open the ApplyModal so the candidate
+  // can supply an optional cover note. The actual POST happens in
+  // `submitApplication` once they hit Submit in the modal.
+  function openApply(jobId: number) {
+    const job = allJobs.find((j) => j.id === jobId);
+    if (job) setApplyFor(job);
+  }
+
+  async function submitApplication(coverNote: string) {
+    if (!applyFor) return;
+    setApplyingId(applyFor.id);
     try {
-      await applicationsApi.create(jobId);
-      setAppliedIds(prev => new Set(prev).add(jobId));
+      await applicationsApi.create(applyFor.id, coverNote);
+      setAppliedIds((prev) => new Set(prev).add(applyFor.id));
       toast.success("Application submitted!");
+      setApplyFor(null);
     } catch (err) {
       toast.error(humanizeError(err));
     } finally {
@@ -94,6 +108,24 @@ export default function AllJobsPage() {
 
   const recJobMap = new Map(recMatches.map(m => [m.job.id, m]));
 
+  // Client-side location + salary filter. Backend `search` handles keyword +
+  // job_type; the extra filters run over the current page result set. This
+  // is intentional — it keeps the current server contract stable while still
+  // giving candidates finer control on the visible list.
+  const filteredJobs = useMemo(() => {
+    const loc = location.trim().toLowerCase();
+    const minS = minSalary ? parseInt(minSalary, 10) * 1000 : 0;
+    return allJobs.filter((j) => {
+      if (loc && !(j.location ?? "").toLowerCase().includes(loc)) return false;
+      if (minS > 0) {
+        const jobMin = j.salary_min ?? 0;
+        const jobMax = j.salary_max ?? jobMin;
+        if (Math.max(jobMin, jobMax) < minS) return false;
+      }
+      return true;
+    });
+  }, [allJobs, location, minSalary]);
+
   const renderCard = (job: Job) => {
     const match = recJobMap.get(job.id);
     return (
@@ -103,7 +135,7 @@ export default function AllJobsPage() {
         score={match?.score}
         matchedSkills={match?.matched_skills}
         onViewGap={isAuthenticated && isCandidate ? setGapJobId : undefined}
-        onApply={isAuthenticated && isCandidate ? handleApply : undefined}
+        onApply={isAuthenticated && isCandidate ? openApply : undefined}
         onFeedback={isAuthenticated && isCandidate ? handleFeedback : undefined}
         applied={appliedIds.has(job.id)}
         applying={applyingId === job.id}
@@ -121,8 +153,8 @@ export default function AllJobsPage() {
           subtitle="Browse every open position across Nepal's tech sector"
         />
 
-        {/* Search + filter */}
-        <div className="flex flex-wrap items-center gap-3 mb-5">
+        {/* Search + filters */}
+        <div className="flex flex-wrap items-center gap-3 mb-3">
           <div className="relative flex-1 min-w-48">
             <Search size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
             <input
@@ -132,6 +164,7 @@ export default function AllJobsPage() {
               onChange={e => { setSearch(e.target.value); setPage(1); }}
               onKeyDown={e => e.key === "Enter" && fetchAll()}
               className="input pl-9"
+              aria-label="Search jobs"
             />
           </div>
           <div className="relative">
@@ -140,6 +173,7 @@ export default function AllJobsPage() {
               value={jobType}
               onChange={e => { setJobType(e.target.value); setPage(1); }}
               className="input pl-8 pr-9 appearance-none cursor-pointer"
+              aria-label="Filter by job type"
             >
               <option value="">All types</option>
               <option value="full_time">Full Time</option>
@@ -152,9 +186,45 @@ export default function AllJobsPage() {
           </div>
         </div>
 
+        <div className="flex flex-wrap items-center gap-3 mb-5">
+          <div className="relative flex-1 min-w-44">
+            <MapPin size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+            <input
+              type="text"
+              placeholder="Location — e.g. Kathmandu, Lalitpur…"
+              value={location}
+              onChange={e => setLocation(e.target.value)}
+              className="input pl-9"
+              aria-label="Filter by location"
+            />
+          </div>
+          <div className="relative w-full sm:w-56">
+            <Wallet size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+            <input
+              type="number"
+              min={0}
+              step={5}
+              placeholder="Min salary (NPR ×1000)"
+              value={minSalary}
+              onChange={e => setMinSalary(e.target.value)}
+              className="input pl-9 tabular-nums"
+              aria-label="Minimum salary in NPR thousands"
+            />
+          </div>
+          {(location || minSalary) && (
+            <button
+              type="button"
+              onClick={() => { setLocation(""); setMinSalary(""); }}
+              className="text-xs font-semibold text-slate-500 hover:text-slate-900 transition-colors"
+            >
+              Clear filters
+            </button>
+          )}
+        </div>
+
         {!loading && !loadError && (
           <p className="text-sm text-slate-500 mb-4 tabular-nums">
-            {total} {total === 1 ? "role" : "roles"} found
+            {filteredJobs.length} of {total} {total === 1 ? "role" : "roles"} shown
           </p>
         )}
 
@@ -164,7 +234,7 @@ export default function AllJobsPage() {
           </div>
         ) : loadError ? (
           <ErrorState variant="error" title="Couldn't load jobs" message={humanizeError(loadError)} onRetry={fetchAll} />
-        ) : allJobs.length === 0 ? (
+        ) : filteredJobs.length === 0 ? (
           <div className="card flex flex-col items-center justify-center py-20 text-center">
             <div className="h-14 w-14 rounded-xl bg-slate-100 flex items-center justify-center mb-4 ring-1 ring-slate-200/70">
               <Search size={24} className="text-slate-400" />
@@ -174,7 +244,7 @@ export default function AllJobsPage() {
           </div>
         ) : (
           <div className="grid md:grid-cols-2 gap-4">
-            {allJobs.map(renderCard)}
+            {filteredJobs.map(renderCard)}
           </div>
         )}
 
@@ -195,6 +265,12 @@ export default function AllJobsPage() {
       </div>
 
       <GapDrawer jobId={gapJobId} onClose={() => setGapJobId(null)} />
+      <ApplyModal
+        job={applyFor}
+        submitting={applyingId === applyFor?.id}
+        onCancel={() => setApplyFor(null)}
+        onSubmit={submitApplication}
+      />
     </div>
   );
 }
