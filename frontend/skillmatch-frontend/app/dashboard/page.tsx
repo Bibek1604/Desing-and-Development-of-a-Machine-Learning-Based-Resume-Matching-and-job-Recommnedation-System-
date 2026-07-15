@@ -11,7 +11,6 @@ import { useRequireAuth } from "@/context/AuthContext";
 import { matching, mediaUrl, humanizeError, APIError, type DashboardData } from "@/lib/api";
 import ErrorState from "@/components/ErrorState";
 import Avatar from "@/components/Avatar";
-import EmailVerifyBanner from "@/components/EmailVerifyBanner";
 import { scoreTextClass, scoreBarClass, scoreBadgeClass } from "@/lib/score";
 
 function QuickAction({ href, icon: Icon, label, hint }: {
@@ -147,7 +146,6 @@ export default function DashboardPage() {
     <div className="page">
       <div className="page-inner space-y-6">
 
-        <EmailVerifyBanner />
 
         {/* ── Hero header ── */}
         <div className="card overflow-hidden">

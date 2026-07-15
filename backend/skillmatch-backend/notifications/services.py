@@ -34,7 +34,7 @@ def _already_notified(user, job) -> bool:
     from .models import Notification
     cutoff = timezone.now() - timedelta(days=SPAM_COOLDOWN_DAYS)
     return Notification.objects.filter(
-        candidate=user,
+        recipient=user,
         job=job,
         email_sent=True,
         sent_at__gte=cutoff,

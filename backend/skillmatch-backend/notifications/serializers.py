@@ -3,9 +3,9 @@ from .models import Notification, EmailLog
 
 
 class NotificationSerializer(serializers.ModelSerializer):
-    job_title   = serializers.CharField(source="job.title",   read_only=True)
-    job_company = serializers.CharField(source="job.company", read_only=True)
-    job_id      = serializers.IntegerField(source="job.id",   read_only=True)
+    job_title   = serializers.SerializerMethodField()
+    job_company = serializers.SerializerMethodField()
+    job_id      = serializers.SerializerMethodField()
 
     class Meta:
         model  = Notification
@@ -15,6 +15,21 @@ class NotificationSerializer(serializers.ModelSerializer):
             "sent_at", "is_read", "email_sent",
         ]
         read_only_fields = fields
+
+    def get_job_title(self, obj):
+        if obj.job:
+            return obj.job.title
+        if obj.notification_type == Notification.Type.PROFILE_UPDATED:
+            return "Profile Update"
+        return "System Notification"
+
+    def get_job_company(self, obj):
+        if obj.job:
+            return obj.job.company
+        return "SkillMatch"
+
+    def get_job_id(self, obj):
+        return obj.job.id if obj.job else None
 
 
 class EmailLogSerializer(serializers.ModelSerializer):

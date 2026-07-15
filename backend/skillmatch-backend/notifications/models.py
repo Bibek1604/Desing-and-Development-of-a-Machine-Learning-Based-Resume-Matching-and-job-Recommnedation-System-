@@ -7,11 +7,14 @@ class Notification(models.Model):
     """In-app notification record for a candidate-job match."""
 
     class Type(models.TextChoices):
-        JOB_MATCH      = "job_match",      "Job Match"
-        HIGH_PRIORITY  = "high_priority",  "High Priority Match"
-        RECRUITER_ALERT= "recruiter_alert","Recruiter Alert"
+        JOB_MATCH       = "job_match",       "Job Match"
+        HIGH_PRIORITY   = "high_priority",   "High Priority Match"
+        RECRUITER_ALERT = "recruiter_alert", "Recruiter Alert"
+        STATUS_UPDATE   = "status_update",   "Application Status Update"
+        NEW_APPLICATION = "new_application", "New Application"
+        PROFILE_UPDATED = "profile_updated", "Profile/Resume Updated"
 
-    candidate        = models.ForeignKey(
+    recipient        = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
         related_name="notifications",
@@ -20,12 +23,15 @@ class Notification(models.Model):
         "jobs.Job",
         on_delete=models.CASCADE,
         related_name="notifications",
+        null=True,
+        blank=True,
     )
     notification_type = models.CharField(max_length=20, choices=Type.choices)
-    match_score       = models.FloatField()
+    match_score       = models.FloatField(null=True, blank=True)
     match_data        = models.JSONField(
         default=dict,
-        help_text="reasons, matched_skills, missing_skills, explanation_summary",
+        blank=True,
+        help_text="reasons, matched_skills, missing_skills, explanation_summary, etc",
     )
     sent_at    = models.DateTimeField(auto_now_add=True)
     is_read    = models.BooleanField(default=False)
@@ -34,12 +40,13 @@ class Notification(models.Model):
     class Meta:
         ordering = ["-sent_at"]
         indexes = [
-            models.Index(fields=["candidate", "is_read"]),
-            models.Index(fields=["candidate", "job"]),
+            models.Index(fields=["recipient", "is_read"]),
+            models.Index(fields=["recipient", "job"]),
         ]
 
     def __str__(self):
-        return f"{self.candidate.email} | {self.job.title} | {self.match_score:.0f}%"
+        job_title = self.job.title if self.job else "System"
+        return f"{self.recipient.email} | {job_title} | {self.notification_type}"
 
     def mark_read(self):
         if not self.is_read:

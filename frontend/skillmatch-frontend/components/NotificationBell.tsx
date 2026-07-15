@@ -2,7 +2,8 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import Link from "next/link";
-import { Bell, Check } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { Bell, Check, Briefcase, Info, User } from "lucide-react";
 import { notifications as notifApi, type AppNotification } from "@/lib/api";
 import { SCORE_THRESHOLDS } from "@/lib/score";
 
@@ -30,6 +31,8 @@ export default function NotificationBell() {
   const [highPri, setHighPri] = useState(0);
   const [loading, setLoading] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+
+  const router = useRouter();
 
   // Poll unread count every 30 seconds
   const fetchCount = useCallback(() => {
@@ -66,10 +69,18 @@ export default function NotificationBell() {
     setOpen(v => !v);
   }
 
-  async function handleMarkRead(id: number) {
-    await notifApi.markRead(id).catch(() => {});
-    setNotifs(prev => prev.map(n => n.id === id ? { ...n, is_read: true } : n));
-    setUnread(c => Math.max(0, c - 1));
+  async function handleMarkRead(n: AppNotification) {
+    if (!n.is_read) {
+      await notifApi.markRead(n.id).catch(() => {});
+      setNotifs(prev => prev.map(x => x.id === n.id ? { ...x, is_read: true } : x));
+      setUnread(c => Math.max(0, c - 1));
+    }
+    setOpen(false);
+    if (n.notification_type === "new_application") router.push("/employer");
+    else if (n.notification_type === "status_update") router.push("/applications");
+    else if (n.notification_type === "profile_updated") router.push("/profile");
+    else if (n.job_id) router.push(`/jobs/${n.job_id}`);
+    else router.push("/dashboard");
   }
 
   async function handleMarkAllRead() {
@@ -147,33 +158,62 @@ export default function NotificationBell() {
 
             {!loading && notifs.map(n => {
               const isHP = n.notification_type === "high_priority";
-              const score = Math.round(n.match_score);
+              
+              let Icon = null;
+              let iconBg = "";
+              let title = n.job_title;
+              let subtitle = n.job_company;
+              let msg = null;
+
+              if (n.notification_type === "new_application") {
+                Icon = <Briefcase size={18} className="text-brand-600" />;
+                iconBg = "bg-brand-100 ring-brand-600/20";
+                msg = <span className="text-brand-700 font-medium">New applicant: {n.match_data?.candidate_name}</span>;
+              } else if (n.notification_type === "status_update") {
+                Icon = <Info size={18} className="text-blue-600" />;
+                iconBg = "bg-blue-100 ring-blue-600/20";
+                msg = <span>Status changed to <strong className="font-medium text-slate-700">{n.match_data?.new_status}</strong></span>;
+              } else if (n.notification_type === "profile_updated") {
+                Icon = <User size={18} className="text-emerald-600" />;
+                iconBg = "bg-emerald-100 ring-emerald-600/20";
+                title = "Profile Updated";
+                subtitle = "SkillMatch";
+                msg = <span>{n.match_data?.message || "Your profile was updated."}</span>;
+              } else {
+                const score = Math.round(n.match_score || 0);
+                Icon = <span className="font-bold">{score}%</span>;
+                iconBg = scoreTone(score);
+                if (n.match_data?.reasons?.length) {
+                  msg = <span className="text-brand-700 flex items-center gap-1"><Check size={11} className="shrink-0" /> {n.match_data.reasons[0]}</span>;
+                }
+              }
+
               return (
                 <div
                   key={n.id}
-                  onClick={() => !n.is_read && handleMarkRead(n.id)}
+                  onClick={() => handleMarkRead(n)}
                   className={`flex gap-3 px-4 py-3 cursor-pointer transition-colors duration-150 border-b border-slate-50
                     ${n.is_read ? "bg-white hover:bg-slate-50/60" : "bg-brand-50/40 hover:bg-brand-50/70"}
                     ${isHP ? "border-l-2 border-l-red-500" : ""}`}
                 >
-                  {/* Score badge */}
+                  {/* Icon or Score badge */}
                   <div className={`shrink-0 flex h-10 w-10 items-center justify-center
-                      rounded-full text-sm font-bold tabular-nums ${scoreTone(score)}`}>
-                    {score}%
+                      rounded-full text-sm ring-1 ring-inset ${iconBg}`}>
+                    {Icon}
                   </div>
 
                   <div className="flex-1 min-w-0">
                     <div className="flex items-start justify-between gap-2">
                       <p className={`text-sm font-medium truncate ${n.is_read ? "text-slate-700" : "text-slate-900"}`}>
                         {isHP && <span className="mr-1.5 inline-block h-1.5 w-1.5 rounded-full bg-red-500 align-middle" aria-label="High priority" />}
-                        {n.job_title}
+                        {title}
                       </p>
                       <span className="text-xs text-slate-500 shrink-0">{timeAgo(n.sent_at)}</span>
                     </div>
-                    <p className="text-xs text-slate-500 truncate">{n.job_company}</p>
-                    {n.match_data?.reasons?.length > 0 && (
-                      <p className="flex items-center gap-1 text-xs text-brand-700 mt-0.5 truncate">
-                        <Check size={11} className="shrink-0" /> {n.match_data.reasons[0]}
+                    <p className="text-xs text-slate-500 truncate">{subtitle}</p>
+                    {msg && (
+                      <p className="text-xs text-slate-600 mt-0.5 truncate">
+                        {msg}
                       </p>
                     )}
                     {!n.is_read && (

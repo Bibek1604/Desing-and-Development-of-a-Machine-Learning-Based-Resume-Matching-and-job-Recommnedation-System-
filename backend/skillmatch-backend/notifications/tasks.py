@@ -58,7 +58,7 @@ def _create_notification(user, job, score: float, match_data: dict):
 
     with transaction.atomic():
         notif, created = Notification.objects.get_or_create(
-            candidate=user,
+            recipient=user,
             job=job,
             notification_type=ntype,
             defaults={"match_score": score, "match_data": match_data},

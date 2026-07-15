@@ -4,9 +4,9 @@ from .models import Notification, EmailLog
 
 @admin.register(Notification)
 class NotificationAdmin(admin.ModelAdmin):
-    list_display  = ("candidate", "job", "notification_type", "match_score", "is_read", "email_sent", "sent_at")
+    list_display  = ("recipient", "job", "notification_type", "match_score", "is_read", "email_sent", "sent_at")
     list_filter   = ("notification_type", "is_read", "email_sent")
-    search_fields = ("candidate__email", "job__title")
+    search_fields = ("recipient__email", "job__title")
     readonly_fields = ("sent_at",)
 
 

@@ -14,7 +14,7 @@ class NotificationListView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
-        qs = Notification.objects.filter(candidate=request.user).select_related("job")
+        qs = Notification.objects.filter(recipient=request.user).select_related("job")
         ntype = request.query_params.get("type")
         unread = request.query_params.get("unread")
         if ntype:
@@ -31,7 +31,7 @@ class NotificationMarkReadView(APIView):
 
     def patch(self, request, pk):
         try:
-            notif = Notification.objects.get(pk=pk, candidate=request.user)
+            notif = Notification.objects.get(pk=pk, recipient=request.user)
         except Notification.DoesNotExist:
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
         notif.mark_read()
@@ -44,7 +44,7 @@ class NotificationMarkAllReadView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request):
-        updated = Notification.objects.filter(candidate=request.user, is_read=False).update(is_read=True)
+        updated = Notification.objects.filter(recipient=request.user, is_read=False).update(is_read=True)
         return Response({"marked_read": updated})
 
 
@@ -54,9 +54,9 @@ class NotificationUnreadCountView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
-        count = Notification.objects.filter(candidate=request.user, is_read=False).count()
+        count = Notification.objects.filter(recipient=request.user, is_read=False).count()
         high  = Notification.objects.filter(
-            candidate=request.user,
+            recipient=request.user,
             is_read=False,
             notification_type=Notification.Type.HIGH_PRIORITY,
         ).count()
@@ -93,8 +93,8 @@ class NotificationAnalyticsView(APIView):
             })
 
         # Candidate's own stats
-        total = Notification.objects.filter(candidate=request.user).count()
-        unread= Notification.objects.filter(candidate=request.user, is_read=False).count()
+        total = Notification.objects.filter(recipient=request.user).count()
+        unread= Notification.objects.filter(recipient=request.user, is_read=False).count()
         emails= EmailLog.objects.filter(recipient=request.user.email, status=EmailLog.Status.SENT).count()
         return Response({
             "total_notifications": total,

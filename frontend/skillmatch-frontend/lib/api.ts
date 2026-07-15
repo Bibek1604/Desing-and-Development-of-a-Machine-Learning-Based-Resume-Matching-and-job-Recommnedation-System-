@@ -192,7 +192,6 @@ export interface MeResponse {
   email:           string;
   full_name:       string;
   role:            UserRole;
-  email_verified?: boolean;
 }
 export interface ProfileResponse {
   id:                 number;
@@ -543,7 +542,7 @@ export const savedJobs = {
     request<void>(`/api/saved-jobs/${id}/`, "DELETE"),
 };
 
-// ── Password reset & email verification ────────────────────────────────────
+// ── Password reset ──────────────────────────────────────────────────────────
 export const passwordReset = {
   request: (email: string) =>
     request<{ detail: string }>("/api/auth/password-reset/request/", "POST", { email }),
@@ -551,26 +550,24 @@ export const passwordReset = {
     request<{ detail: string }>("/api/auth/password-reset/confirm/", "POST", { uid, token, new_password }),
 };
 
-export const emailVerification = {
-  send: () => request<{ detail: string }>("/api/auth/verify-email/send/", "POST", {}),
-  confirm: (uid: string, token: string) =>
-    request<{ detail: string; email?: string }>("/api/auth/verify-email/confirm/", "POST", { uid, token }),
-};
-
 
 // ── Notifications ─────────────────────────────────────────────────────────────
 export interface AppNotification {
   id:                number;
-  job_id:            number;
+  job_id?:           number;
   job_title:         string;
   job_company:       string;
-  notification_type: "job_match" | "high_priority" | "recruiter_alert";
-  match_score:       number;
+  notification_type: "job_match" | "high_priority" | "recruiter_alert" | "status_update" | "new_application" | "profile_updated";
+  match_score?:      number;
   match_data: {
-    matched_skills:      string[];
-    missing_skills:      string[];
-    reasons:             string[];
-    explanation_summary: string;
+    matched_skills?:      string[];
+    missing_skills?:      string[];
+    reasons?:             string[];
+    explanation_summary?: string;
+    old_status?:          string;
+    new_status?:          string;
+    candidate_name?:      string;
+    message?:             string;
   };
   sent_at:    string;
   is_read:    boolean;

@@ -37,10 +37,16 @@ def _queue(task, *args) -> None:
 def on_resume_saved(sender, instance, created, **kwargs):
     """Fire match evaluation whenever a resume is saved (new or updated)."""
     from .tasks import evaluate_candidate_matches
+    from .models import Notification
     user = instance.candidate
     if user and user.is_active:
         logger.debug("signal: resume saved for %s — queuing match eval", user.email)
         _queue(evaluate_candidate_matches, user.pk)
+        Notification.objects.create(
+            recipient=user,
+            notification_type=Notification.Type.PROFILE_UPDATED,
+            match_data={"message": "Resume uploaded and profile analyzed."}
+        )
 
 
 # ── Candidate profile update ──────────────────────────────────────────────────
@@ -48,10 +54,18 @@ def on_resume_saved(sender, instance, created, **kwargs):
 def on_profile_saved(sender, instance, created, **kwargs):
     """Re-run matching when a candidate updates their profile / skills."""
     from .tasks import evaluate_candidate_matches
+    from .models import Notification
     user = instance.user
     if user and user.is_active:
         logger.debug("signal: profile saved for %s — queuing match eval", user.email)
         _queue(evaluate_candidate_matches, user.pk)
+        
+        # Don't create too many if just minor updates, but for now we create one.
+        Notification.objects.create(
+            recipient=user,
+            notification_type=Notification.Type.PROFILE_UPDATED,
+            match_data={"message": "Profile updated successfully."}
+        )
 
 
 # ── New job posted ────────────────────────────────────────────────────────────

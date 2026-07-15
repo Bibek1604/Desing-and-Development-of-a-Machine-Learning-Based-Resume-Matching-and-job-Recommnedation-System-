@@ -37,17 +37,35 @@ class ApplicationViewSet(viewsets.ModelViewSet):
         except Exception as exc:  # noqa: BLE001
             logger.error("score_candidate_for_job failed (job %s)", job.pk, exc_info=exc)
             score = 0
-        serializer.save(candidate=self.request.user, match_score=score)
+        app = serializer.save(candidate=self.request.user, match_score=score)
+
+        from notifications.models import Notification
+        Notification.objects.create(
+            recipient=job.employer,
+            job=job,
+            notification_type=Notification.Type.NEW_APPLICATION,
+            match_score=score,
+            match_data={"candidate_name": self.request.user.full_name or self.request.user.email}
+        )
 
     def perform_update(self, serializer):
         instance = serializer.instance
+        old_status = instance.status
         new_status = self.request.data.get("status")
         user = self.request.user
         is_owner_employer = (
             getattr(user, "is_employer", False) and instance.job.employer_id == user.id
         )
-        if is_owner_employer and new_status in Application.Status.values:
+        if is_owner_employer and new_status in Application.Status.values and new_status != old_status:
             serializer.save(status=new_status)
+            
+            from notifications.models import Notification
+            Notification.objects.create(
+                recipient=instance.candidate,
+                job=instance.job,
+                notification_type=Notification.Type.STATUS_UPDATE,
+                match_data={"old_status": old_status, "new_status": new_status}
+            )
         else:
             serializer.save()
 
