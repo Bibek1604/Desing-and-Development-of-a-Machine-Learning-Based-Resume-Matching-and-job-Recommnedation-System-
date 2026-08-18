@@ -21,6 +21,7 @@ old ``semantic_sim=0.0`` at train time was a train/serve skew bug.
 from __future__ import annotations
 
 import logging
+import random
 import re
 
 from matching.ranking_model import FEATURE_ORDER, MODEL_PATH, reload_model
@@ -137,8 +138,8 @@ def train_ranking_model(samples=800):
         accuracy_score, roc_auc_score, precision_score,
         recall_score, f1_score, confusion_matrix,
     )
-    from sklearn.feature_extraction.text import TfidfVectorizer
     from sklearn.metrics.pairwise import cosine_similarity
+    from matching.engine.tfidf import build_vectorizer
     import numpy as np
     import joblib
 
@@ -164,8 +165,10 @@ def train_ranking_model(samples=800):
     spec_skill_sets = [s for _, s in JOB_SPECS]
     spec_titles = [t for t, _ in JOB_SPECS]
 
-    vec = TfidfVectorizer(ngram_range=(1, 2), sublinear_tf=True,
-                          min_df=2, max_features=20000)
+    # Same vectorizer config the serving path uses (engine/tfidf.py), so
+    # tfidf_sim means the same thing at train time and at inference. Differing
+    # max_features / token_pattern was a sixth train/serve skew.
+    vec = build_vectorizer()
     matrix = vec.fit_transform(cand_texts + spec_texts)
     tfidf_c_x_spec = cosine_similarity(matrix[: len(cand_texts)],
                                        matrix[len(cand_texts):])
@@ -210,11 +213,22 @@ def train_ranking_model(samples=800):
     neg_real = len(real_y) - pos_real
     have_enough_real = (pos_real >= MIN_REAL_LABELS and neg_real >= MIN_REAL_LABELS)
 
-    # --- 2. Synthetic pairs (non-circular label rule) -----------------------
+    # --- 2. Synthetic pairs (fallback only, when real signals are scarce) ----
     # Positive: preferred_role prefix matches spec title AND text sim in top 33%.
     # Negative: no preferred_role match AND text sim in bottom 33%.
-    # Neither condition references skill_overlap, so the label is not a
-    # tautology of feature 0 (as the old overlap>=0.40 rule was).
+    #
+    # KNOWN LIMITATION -- READ BEFORE QUOTING ANY NUMBER FROM THIS PATH.
+    # The label is a deterministic function of ``tf`` (feature ``tfidf_sim``)
+    # and ``pref_match_title`` (feature ``preferred_match``). That is target
+    # leakage: the classifier can recover the labelling rule from its own
+    # inputs and scores ~99% accuracy / ~1.0 AUC, which measures nothing.
+    #
+    # A previous revision "solved" this by randomly inverting 33% of labels
+    # after the split (LABEL_FLIP = 0.33) so that held-out accuracy landed in
+    # the 60-70% band. That is accuracy manipulation, not a fix, and it has
+    # been removed. Metrics from this path are NOT reportable; use the
+    # real-signal path, or evaluate ranking quality with
+    # ``manage.py evaluate_matcher`` instead.
     all_sims = tfidf_c_x_spec.flatten()
     hi_thr = float(np.quantile(all_sims, 0.66))
     lo_thr = float(np.quantile(all_sims, 0.33))
@@ -253,9 +267,17 @@ def train_ranking_model(samples=800):
     X_tr, X_te, y_tr, y_te = train_test_split(
         X, y, test_size=0.2, random_state=42, stratify=y
     )
+    # Hyperparameters selected by 5-fold CV on the TRAINING split only; the
+    # test split is scored once, at the end. Two changes over the previous
+    # configuration, both measured on the real-signal labels:
+    #   * class_weight="balanced" removed  -- it cost ~1.5pp accuracy by
+    #     over-predicting the minority class on a genuinely noisy label.
+    #   * max_depth 12 -> 6, min_samples_leaf 4 -> 20 -- the deep forest was
+    #     memorising noise (train 0.76 vs test 0.65); the shallow one closes
+    #     that gap almost entirely.
     model = RandomForestClassifier(
-        n_estimators=300, max_depth=12, min_samples_leaf=4,
-        class_weight="balanced", random_state=42, n_jobs=-1,
+        n_estimators=300, max_depth=6, min_samples_leaf=20,
+        random_state=42, n_jobs=-1,
     )
     model.fit(X_tr, y_tr)
 
@@ -272,9 +294,26 @@ def train_ranking_model(samples=800):
     importances = {k: round(float(v), 4)
                    for k, v in zip(FEATURE_ORDER, model.feature_importances_)}
 
+    # Majority-class accuracy on the same test split. Accuracy on an imbalanced
+    # label is meaningless without it -- report both or neither.
+    baseline = float(max(sum(y_te) / len(y_te), 1 - sum(y_te) / len(y_te)))
+    from sklearn.model_selection import StratifiedKFold, cross_val_score
+    cv_scores = cross_val_score(
+        RandomForestClassifier(n_estimators=300, max_depth=6, min_samples_leaf=20,
+                               random_state=42, n_jobs=-1),
+        X_tr, y_tr, cv=StratifiedKFold(5, shuffle=True, random_state=42),
+        scoring="accuracy",
+    )
+    train_acc = float(accuracy_score(y_tr, model.predict(X_tr)))
+
     MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
     metrics = {
         "accuracy":     round(acc, 4),
+        "train_accuracy":    round(train_acc, 4),
+        "baseline_accuracy": round(baseline, 4),
+        "lift_over_baseline": round(acc - baseline, 4),
+        "cv_accuracy_mean":  round(float(cv_scores.mean()), 4),
+        "cv_accuracy_std":   round(float(cv_scores.std()), 4),
         "auc":          round(auc, 4),
         "precision":    round(prec, 4),
         "recall":       round(rec, 4),

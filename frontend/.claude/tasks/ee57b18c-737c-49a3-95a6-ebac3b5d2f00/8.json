@@ -1,0 +1,8 @@
+{
+  "id": "8",
+  "subject": "Verify build and present",
+  "description": "Install deps, run next build/typecheck, fix errors, share with user.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}

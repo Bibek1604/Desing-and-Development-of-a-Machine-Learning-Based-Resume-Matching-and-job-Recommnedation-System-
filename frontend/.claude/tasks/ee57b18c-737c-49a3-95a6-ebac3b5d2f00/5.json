@@ -1,0 +1,8 @@
+{
+  "id": "5",
+  "subject": "Scaffold Next.js + TS project config",
+  "description": "package.json, tsconfig, next/tailwind/postcss config, globals.css with blue-on-white design tokens.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}

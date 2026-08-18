@@ -24,13 +24,20 @@ class JobViewSet(viewsets.ModelViewSet):
         qs = super().get_queryset()
         user = self.request.user
         if self.action == "list":
-            # ?mine=true → only the logged-in employer's own postings.
+            # ?mine=true → only the logged-in employer's own postings, which is
+            # the one case where inactive postings are legitimately visible.
             mine = self.request.query_params.get("mine") in ("1", "true", "True")
             if mine:
                 return qs.filter(employer=user) if user.is_authenticated else qs.none()
-            # The public (and candidates) only ever see active jobs.
-            if not (user.is_authenticated and user.is_employer):
-                return qs.filter(is_active=True)
+            # Everyone else sees active postings only. This previously exempted
+            # any authenticated employer, which leaked other employers'
+            # unpublished and withdrawn postings into the public listing.
+            return qs.filter(is_active=True)
+        if self.action == "retrieve" and not (
+            user.is_authenticated and getattr(user, "is_employer", False)
+        ):
+            # A withdrawn posting should not be readable by direct id either.
+            return qs.filter(is_active=True)
         return qs
 
     def perform_create(self, serializer):

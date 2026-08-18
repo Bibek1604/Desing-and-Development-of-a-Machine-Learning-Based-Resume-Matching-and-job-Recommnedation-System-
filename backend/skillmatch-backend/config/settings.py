@@ -3,6 +3,7 @@ from datetime import timedelta
 from pathlib import Path
 import os
 
+from django.core.exceptions import ImproperlyConfigured
 from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -18,9 +19,36 @@ def env_list(key: str, default: str = "") -> list[str]:
     return [item.strip() for item in raw.split(",") if item.strip()]
 
 
-SECRET_KEY = os.environ.get("SECRET_KEY", "dev-insecure-secret-key-change-me")
-DEBUG = env_bool("DEBUG", "1")
+DEBUG = env_bool("DEBUG", "0")
 ALLOWED_HOSTS = env_list("ALLOWED_HOSTS", "localhost,127.0.0.1")
+
+SECRET_KEY = os.environ.get("SECRET_KEY", "")
+if not SECRET_KEY:
+    if DEBUG:
+        SECRET_KEY = "dev-insecure-secret-key-change-me"
+    else:
+        # Refuse to boot with a predictable signing key outside development:
+        # session cookies, password-reset tokens and JWT signatures all derive
+        # from it, so a known value makes every one of them forgeable.
+        raise ImproperlyConfigured(
+            "SECRET_KEY must be set when DEBUG=0. Generate one with:\n"
+            "  python -c \"from django.core.management.utils import get_random_secret_key;"
+            " print(get_random_secret_key())\""
+        )
+
+# --- Production hardening -------------------------------------------------
+# Applied only when DEBUG is off so local HTTP development is unaffected.
+if not DEBUG:
+    SECURE_SSL_REDIRECT = env_bool("SECURE_SSL_REDIRECT", "1")
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    SECURE_HSTS_SECONDS = int(os.environ.get("SECURE_HSTS_SECONDS", "31536000"))
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
+    SECURE_CONTENT_TYPE_NOSNIFF = True
+    SECURE_REFERRER_POLICY = "same-origin"
+    X_FRAME_OPTIONS = "DENY"
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
 INSTALLED_APPS = [
     "django.contrib.admin",
@@ -35,6 +63,9 @@ INSTALLED_APPS = [
     "django_filters",
     "drf_spectacular",
     # Local apps
+    # ``common`` holds shared infrastructure (permissions, error handling,
+    # pagination) and its management commands; it defines no models.
+    "common",
     "accounts",
     "skills",
     "resumes",
@@ -77,26 +108,54 @@ TEMPLATES = [
 WSGI_APPLICATION = "config.wsgi.application"
 
 # --- Database -------------------------------------------------------------
-# This project runs locally on SQLite by default (USE_SQLITE defaults to "1").
-# Set USE_SQLITE=0 in the environment if you ever want to point at PostgreSQL.
-if env_bool("USE_SQLITE", "1"):
-    DATABASES = {
-        "default": {
-            "ENGINE": "django.db.backends.sqlite3",
-            "NAME": os.environ.get("SQLITE_PATH", BASE_DIR / "db.sqlite3"),
-        }
+# PostgreSQL is the only supported backend. The project previously defaulted to
+# SQLite, which diverges from Postgres on transaction semantics, constraint
+# enforcement timing and type coercion, so any behaviour verified on SQLite was
+# not evidence about the deployed database. Development, testing and evaluation
+# now all run on the same engine.
+#
+# DATABASE_URL, when set, takes precedence and is parsed here rather than
+# pulling in an extra dependency for one function.
+def _database_from_url(url: str) -> dict | None:
+    """Parse postgres://user:pass@host:port/name into Django's DATABASES dict."""
+    from urllib.parse import urlparse, unquote
+
+    parsed = urlparse(url)
+    if parsed.scheme not in ("postgres", "postgresql"):
+        return None
+    return {
+        "ENGINE": "django.db.backends.postgresql",
+        "NAME": unquote(parsed.path.lstrip("/")) or "skillmatch",
+        "USER": unquote(parsed.username or ""),
+        "PASSWORD": unquote(parsed.password or ""),
+        "HOST": unquote(parsed.hostname or "localhost"),
+        "PORT": str(parsed.port or 5432),
     }
-else:
-    DATABASES = {
-        "default": {
-            "ENGINE": "django.db.backends.postgresql",
-            "NAME": os.environ.get("DB_NAME", "skillmatch"),
-            "USER": os.environ.get("DB_USER", "skillmatch"),
-            "PASSWORD": os.environ.get("DB_PASSWORD", "skillmatch"),
-            "HOST": os.environ.get("DB_HOST", "localhost"),
-            "PORT": os.environ.get("DB_PORT", "5432"),
-        }
+
+
+_db_url = os.environ.get("DATABASE_URL", "").strip()
+_default_db = _database_from_url(_db_url) if _db_url else None
+
+if _default_db is None:
+    _default_db = {
+        "ENGINE": "django.db.backends.postgresql",
+        "NAME": os.environ.get("DB_NAME", "skillmatch"),
+        "USER": os.environ.get("DB_USER", "postgres"),
+        "PASSWORD": os.environ.get("DB_PASSWORD", ""),
+        "HOST": os.environ.get("DB_HOST", "localhost"),
+        "PORT": os.environ.get("DB_PORT", "5432"),
     }
+
+# Reuse connections for 10 minutes instead of opening one per request, and
+# have Django health-check a pooled connection before handing it out.
+_default_db.setdefault("CONN_MAX_AGE", int(os.environ.get("DB_CONN_MAX_AGE", "600")))
+_default_db.setdefault("CONN_HEALTH_CHECKS", True)
+_default_db.setdefault("OPTIONS", {"connect_timeout": int(os.environ.get("DB_CONNECT_TIMEOUT", "10"))})
+# Wrap each request in a transaction so a view that raises midway cannot leave
+# a half-written row set behind (e.g. Application saved but Notification not).
+_default_db.setdefault("ATOMIC_REQUESTS", env_bool("DB_ATOMIC_REQUESTS", "1"))
+
+DATABASES = {"default": _default_db}
 
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},

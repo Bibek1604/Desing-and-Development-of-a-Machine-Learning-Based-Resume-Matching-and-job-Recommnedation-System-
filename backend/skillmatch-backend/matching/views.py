@@ -32,11 +32,26 @@ class CandidateResumeView(APIView):
 
     def get(self, request, user_id):
         u = request.user
-        if not (getattr(u, "is_employer", False) or u.role == "admin" or u.is_staff):
+        is_admin = u.role == "admin" or u.is_staff
+        if not (getattr(u, "is_employer", False) or is_admin):
             return Response({"detail": "You do not have permission to view this resume."}, status=403)
 
         from accounts.models import User
         cand = get_object_or_404(User, pk=user_id)
+
+        # An employer may only read the resume of someone who actually applied
+        # to one of their own jobs. Without this check any employer account can
+        # enumerate user ids and read every candidate's resume (IDOR).
+        if not is_admin:
+            from applications.models import Application
+            if not Application.objects.filter(
+                candidate=cand, job__employer=u
+            ).exists():
+                return Response(
+                    {"detail": "You can only view resumes of candidates who applied to your jobs."},
+                    status=403,
+                )
+
         resume = cand.resumes.filter(is_primary=True).first() or cand.resumes.first()
         profile = getattr(cand, "candidate_profile", None)
         return Response({

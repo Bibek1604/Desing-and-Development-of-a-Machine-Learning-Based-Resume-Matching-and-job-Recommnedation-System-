@@ -125,18 +125,26 @@ def _use_index():
 
 # --- Trained-ranker + collab helpers ---------------------------------------
 
-def _rerank_with_trained_model(user, shortlist):
-    """Score each shortlisted job with the trained ranker. {job_id: 0-100}.
+def _rerank_with_trained_model(user, shortlist, cand):
+    """Shortlist probability per job: {job_id: float in [0, 1]}.
 
-    Falls back to an empty dict (so the hybrid score is used) if the model
-    artifact isn't loaded or the ranker fails for any reason.
+    Used for ORDERING only -- the number displayed to the user stays the
+    interpretable hybrid content score. Returns {} if the artifact is absent
+    or the ranker fails, in which case ordering falls back to that same score.
+
+    ``cand`` and each row's precomputed ``sim`` are threaded through so the
+    ranker reuses the fitted corpus index instead of re-fitting a TF-IDF
+    vectorizer per (candidate, job) pair -- that refit made a single
+    recommendation request take 3-11 seconds and produced IDF statistics the
+    model was never trained on.
     """
     try:
         from .ranking_model import CandidateJobRanker, _get_model
         if _get_model() is None:
             return {}
-        ranker = CandidateJobRanker()
-        return {r["job"].pk: ranker.score(user, r["job"]) for r in shortlist}
+        return CandidateJobRanker().shortlist_probabilities(
+            user, [(r["job"], r["raw_sim"]) for r in shortlist], cand=cand,
+        )
     except Exception:
         return {}
 
@@ -226,6 +234,7 @@ def recommend_jobs_for_candidate(user, limit=20):
         display = {normalize_skill(s.name): s.name for s in job.required_skills.all()}
         shortlist.append({
             "job":            job,
+            "raw_sim":        float(sim),
             "hybrid_score":   _combine(sim, overlap),
             "similarity":     int(round(_calibrate(sim) * 100)),
             "matched_skills": [display.get(m, m) for m in matched],
@@ -235,22 +244,31 @@ def recommend_jobs_for_candidate(user, limit=20):
     if not shortlist:
         return []
 
-    # Stage 2: trained-ranker rerank
-    ranker_scores = _rerank_with_trained_model(user, shortlist)
+    # Stage 2: trained-ranker probabilities (ordering signal only)
+    probs = _rerank_with_trained_model(user, shortlist, (resume_text, cand_skills))
 
     # Stage 3: collaborative-filtering boost
     collab = _collab_boost_for_candidate(user, [r["job"].pk for r in shortlist])
 
     results = []
     for r in shortlist:
-        base = ranker_scores.get(r["job"].pk, r["hybrid_score"])
+        # ``score`` is the interpretable content match (weighted skill coverage
+        # + calibrated text similarity) and the list is sorted by it, so the
+        # ranking a user sees is always monotonic in the number shown.
+        #
+        # The trained classifier's output is reported separately as
+        # ``shortlist_probability`` rather than driving the order: measured on
+        # this dataset it reaches AUC 0.58 and a cross-validated accuracy equal
+        # to the majority-class baseline, so there is no evidence it orders
+        # candidates better than the content score. Promote it to the sort key
+        # once it beats the baseline on held-out data.
         boost = collab.get(r["job"].pk, 0)
-        final = max(0, min(100, int(round(base * 0.85 + boost * 15))))
         results.append({
             "job":            r["job"],
-            "score":          final,
+            "score":          max(0, min(100, int(round(r["hybrid_score"] * 0.85 + boost * 15)))),
             "similarity":     r["similarity"],
             "matched_skills": r["matched_skills"],
+            "shortlist_probability": round(probs[r["job"].pk], 4) if r["job"].pk in probs else None,
         })
     results.sort(key=lambda r: r["score"], reverse=True)
     return results[:limit]
@@ -294,6 +312,8 @@ def rank_candidates_for_job(job, limit=20):
         overlap, matched = _skill_overlap(cand_skills, job_skills)
         shortlist.append({
             "candidate":      user,
+            "raw_sim":        float(sim),
+            "cand_skills":    cand_skills,
             "hybrid_score":   _combine(sim, overlap),
             "similarity":     int(round(_calibrate(sim) * 100)),
             "matched_skills": [job_skill_display.get(m, m) for m in matched],
@@ -307,15 +327,22 @@ def rank_candidates_for_job(job, limit=20):
     except Exception:
         ranker = None
 
-    results = []
-    for r in shortlist:
-        base = ranker.score(r["candidate"], job) if ranker else r["hybrid_score"]
-        results.append({
-            "candidate":      r["candidate"],
-            "score":          int(round(base)),
-            "similarity":     r["similarity"],
-            "matched_skills": r["matched_skills"],
-        })
+    # Same contract as the candidate side: sort by the score that is displayed,
+    # report the classifier probability alongside it.
+    probs = {}
+    if ranker is not None:
+        for r in shortlist:
+            p = ranker.shortlist_probability(r["candidate"], job, sim=r["raw_sim"])
+            if p is not None:
+                probs[r["candidate"].pk] = p
+
+    results = [{
+        "candidate":      r["candidate"],
+        "score":          r["hybrid_score"],
+        "similarity":     r["similarity"],
+        "matched_skills": r["matched_skills"],
+        "shortlist_probability": round(probs[r["candidate"].pk], 4) if r["candidate"].pk in probs else None,
+    } for r in shortlist]
     results.sort(key=lambda r: r["score"], reverse=True)
     return results[:limit]
 
@@ -323,17 +350,10 @@ def rank_candidates_for_job(job, limit=20):
 def score_candidate_for_job(user, job):
     """Single match score (0-100) for one candidate against one job.
 
-    Uses the trained ranker if the artifact is present, so every surface that
-    shows a match score (recommendations, employer ranking, and the number
-    stamped on an Application) shares the same scoring model. Falls back to
-    the hybrid content score when the artifact isn't available.
+    One definition of "match score" for every surface: recommendations,
+    employer ranking, and the number stamped on an Application all reduce to
+    ``_combine(similarity, skill_overlap)``.
     """
-    try:
-        from .ranking_model import CandidateJobRanker, _get_model
-        if _get_model() is not None:
-            return int(CandidateJobRanker().score(user, job))
-    except Exception:
-        pass
     resume_text, cand_skills = candidate_text_and_skills(user)
     matcher = get_matcher()
     sims = matcher.similarity(resume_text, [job.as_match_text()])

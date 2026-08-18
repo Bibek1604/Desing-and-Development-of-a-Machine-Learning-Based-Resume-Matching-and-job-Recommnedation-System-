@@ -29,10 +29,28 @@ class ApplicationSerializer(serializers.ModelSerializer):
             "university": getattr(prof, "university", "") if prof else "",
         }
 
+    MAX_COVER_NOTE = 5_000
+
     def validate_job(self, job):
+        # ``job`` must not be swappable after creation: the stored match_score
+        # was computed against the original posting, and reassigning the FK
+        # would bypass both the duplicate-application check and the re-score.
+        if self.instance is not None and job.pk != self.instance.job_id:
+            raise serializers.ValidationError(
+                "The job on an existing application cannot be changed. "
+                "Withdraw this application and apply to the other role instead."
+            )
         if not job.is_active:
             raise serializers.ValidationError("This job is no longer accepting applications.")
         return job
+
+    def validate_cover_note(self, value):
+        value = (value or "").strip()
+        if len(value) > self.MAX_COVER_NOTE:
+            raise serializers.ValidationError(
+                f"Cover note cannot exceed {self.MAX_COVER_NOTE:,} characters."
+            )
+        return value
 
 
 class FeedbackSerializer(serializers.ModelSerializer):

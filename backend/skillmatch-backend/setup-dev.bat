@@ -38,9 +38,21 @@ echo ^>^> Installing dependencies (this is the slow step) ...
 ".venv\Scripts\python.exe" -m pip install -r requirements-min.txt
 
 echo.
-echo ^>^> Preparing .env (SQLite mode) ...
+echo ^>^> Preparing .env ...
 if not exist .env copy .env.example .env >nul
-powershell -NoProfile -Command "(Get-Content .env) -replace '^USE_SQLITE=.*','USE_SQLITE=1' | Set-Content .env"
+echo    Set DB_PASSWORD in .env before continuing (PostgreSQL is required).
+
+echo.
+echo ^>^> Ensuring the PostgreSQL database exists ...
+REM  There is no SQLite fallback. If createdb is not on PATH, create the
+REM  database manually in pgAdmin:  CREATE DATABASE skillmatch;
+where createdb >nul 2>&1
+if %ERRORLEVEL%==0 (
+    createdb -h localhost -p 5432 -U postgres skillmatch 2>nul
+    echo    Database ready ^(or already existed^).
+) else (
+    echo    createdb not found on PATH - create "skillmatch" in pgAdmin first.
+)
 
 echo.
 echo ^>^> Applying migrations ...

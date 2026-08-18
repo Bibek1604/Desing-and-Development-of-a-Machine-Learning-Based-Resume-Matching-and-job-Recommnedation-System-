@@ -23,13 +23,16 @@ def _queue(task, *args) -> None:
     When NOTIFY_ASYNC is off (local dev without Redis) the dispatch is skipped;
     any unexpected broker error is logged instead of bubbling into the response.
     """
+    # When Celery is absent, tasks.shared_task degrades to a plain function
+    # with no .name / .delay — never assume the Celery attributes exist.
+    name = getattr(task, "name", getattr(task, "__name__", repr(task)))
     if not getattr(settings, "NOTIFY_ASYNC", True):
-        logger.debug("NOTIFY_ASYNC disabled — skipping %s%r", task.name, args)
+        logger.debug("NOTIFY_ASYNC disabled — skipping %s%r", name, args)
         return
     try:
         task.delay(*args)
     except Exception:  # noqa: BLE001 — broker down must never break a request
-        logger.exception("Failed to queue %s%r", task.name, args)
+        logger.exception("Failed to queue %s%r", name, args)
 
 
 # ── Resume upload / update ────────────────────────────────────────────────────

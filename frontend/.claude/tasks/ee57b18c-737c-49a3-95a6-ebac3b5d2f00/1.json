@@ -1,0 +1,8 @@
+{
+  "id": "1",
+  "subject": "Define language & tech stack breakdown",
+  "description": "Lay out which programming language and which tool/framework belongs at each layer (frontend, backend, DB, ML/NLP, deployment) with justification for thesis defense.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}

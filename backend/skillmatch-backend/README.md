@@ -47,24 +47,44 @@ cp .env.example .env           # then edit DB credentials
 ```
 
 ### 3. Set up PostgreSQL
-```sql
-CREATE DATABASE skillmatch;
-CREATE USER skillmatch WITH PASSWORD 'skillmatch';
-GRANT ALL PRIVILEGES ON DATABASE skillmatch TO skillmatch;
+
+PostgreSQL is the **only** supported database. There is no SQLite fallback:
+development, tests and evaluation all run on the same engine, so behaviour
+verified locally is behaviour that holds in deployment.
+
+```bash
+psql -U postgres -c "CREATE DATABASE skillmatch;"
+```
+
+Then set the credentials in `.env`:
+
+```ini
+DB_NAME=skillmatch
+DB_USER=postgres
+DB_PASSWORD=your-password
+DB_HOST=localhost
+DB_PORT=5432
 ```
 
 ### 4. Migrate, seed, run
 ```bash
 python manage.py migrate
-python manage.py seed_demo          # demo skills, jobs, and accounts
+python manage.py seed_synthetic     # or seed_demo for a small demo set
 python manage.py createsuperuser    # optional, for the admin panel
 python manage.py runserver
 ```
 
-API runs at http://localhost:8000  ·  Swagger docs at http://localhost:8000/api/docs/
+**Importing the existing SQLite dataset** (one-off, if you have `db.sqlite3`):
+```bash
+python manage.py migrate
+python manage.py migrate_sqlite_to_postgres --sqlite db.sqlite3 --dry-run   # preview
+python manage.py migrate_sqlite_to_postgres --sqlite db.sqlite3
+```
+Copies all application tables in foreign-key-safe order, converts SQLite's
+integer booleans and text JSON to native Postgres types, and realigns every
+sequence afterwards. Safe to re-run.
 
-> Quick start without Postgres: set `USE_SQLITE=1` in `.env` to run on SQLite.
-> This is only a convenience for local dev/tests — PostgreSQL is the real default.
+API runs at http://localhost:8000  ·  Swagger docs at http://localhost:8000/api/docs/
 
 ## Key endpoints
 
@@ -96,5 +116,9 @@ Sentence-BERT without touching the rest of the code.
 
 ## Tests
 ```bash
-USE_SQLITE=1 python manage.py test      # fast; or run against Postgres
+python manage.py test                   # runs against PostgreSQL (test_skillmatch)
 ```
+The database user needs `CREATEDB` to build the throwaway test database.
+29 tests currently pass, covering matching, ranking order, score/explanation
+consistency, upload validation, field validation, job visibility and
+object-level access control.

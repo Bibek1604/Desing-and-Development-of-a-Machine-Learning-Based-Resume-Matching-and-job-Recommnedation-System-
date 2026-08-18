@@ -35,17 +35,31 @@ echo ">> Upgrading pip + installing requirements-min.txt ..."
 "$VENV_PY" -m pip install --upgrade pip
 "$VENV_PY" -m pip install -r requirements-min.txt
 
-# 4. Environment file (SQLite for a no-Postgres quick run) ------------------
+# 4. Environment file --------------------------------------------------------
 if [ ! -f .env ]; then
     cp .env.example .env
-    echo ">> Created .env from .env.example"
+    echo ">> Created .env from .env.example — set DB_PASSWORD before continuing"
 fi
-if grep -q '^USE_SQLITE=' .env; then
-    sed -i 's/^USE_SQLITE=.*/USE_SQLITE=1/' .env
+
+# 5. Database check ----------------------------------------------------------
+# PostgreSQL is required; there is no SQLite fallback. Create the database if
+# it is not already there, so a fresh clone reaches `migrate` in one step.
+DB_NAME="$(grep -E '^DB_NAME=' .env | cut -d= -f2- | tr -d '[:space:]')"
+DB_USER="$(grep -E '^DB_USER=' .env | cut -d= -f2- | tr -d '[:space:]')"
+DB_HOST="$(grep -E '^DB_HOST=' .env | cut -d= -f2- | tr -d '[:space:]')"
+DB_PORT="$(grep -E '^DB_PORT=' .env | cut -d= -f2- | tr -d '[:space:]')"
+export PGPASSWORD="$(grep -E '^DB_PASSWORD=' .env | cut -d= -f2-)"
+if command -v psql >/dev/null 2>&1; then
+    if ! psql -h "${DB_HOST:-localhost}" -p "${DB_PORT:-5432}" -U "${DB_USER:-postgres}" \
+              -lqt 2>/dev/null | cut -d\| -f1 | grep -qw "${DB_NAME:-skillmatch}"; then
+        echo ">> Creating database ${DB_NAME:-skillmatch} ..."
+        createdb -h "${DB_HOST:-localhost}" -p "${DB_PORT:-5432}" \
+                 -U "${DB_USER:-postgres}" "${DB_NAME:-skillmatch}" || true
+    fi
 else
-    echo 'USE_SQLITE=1' >> .env
+    echo ">> psql not found on PATH — create the database manually:"
+    echo "   CREATE DATABASE ${DB_NAME:-skillmatch};"
 fi
-echo ">> .env set to USE_SQLITE=1"
 
 # 5. Database ----------------------------------------------------------------
 echo ">> Applying migrations ..."

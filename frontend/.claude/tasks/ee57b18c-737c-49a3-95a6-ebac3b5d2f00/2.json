@@ -1,0 +1,8 @@
+{
+  "id": "2",
+  "subject": "Specify ML/NLP models and where each is used",
+  "description": "Map each model/algorithm to its job in the pipeline (parsing, skill extraction, text representation, matching/ranking) with baseline vs advanced options and evaluation metrics.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}

@@ -1,4 +1,4 @@
-# ── Minimal dev requirements — boots the server on SQLite with the default
+# ── Minimal dev requirements — boots the server on PostgreSQL with the default
 #    TF-IDF matcher. Heavy ML libs (sentence-transformers, transformers, spaCy,
 #    xgboost, lightgbm, pgvector, redis) are intentionally omitted — the code
 #    imports them lazily and falls back to TF-IDF when they're absent.
@@ -27,3 +27,5 @@ python-docx==1.1.2
 # ── Skill seeding from the provided Excel CV dataset ─────────────────────────
 pandas>=2.2
 openpyxl>=3.1
+
+psycopg2-binary>=2.9

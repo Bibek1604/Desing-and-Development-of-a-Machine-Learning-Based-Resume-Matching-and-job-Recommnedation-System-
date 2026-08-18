@@ -13,7 +13,13 @@ import ErrorState from "@/components/ErrorState";
 import PageHeader from "@/components/PageHeader";
 import { JobCard, SkeletonCard, GapDrawer } from "@/components/jobs/JobCard";
 
-const REC_THRESHOLD = 70;
+// The backend already returns only the top-N jobs, ranked best-first. This is
+// a floor for "worth showing at all", not a quality gate: match scores are
+// bounded by how much of a job's required-skill list a candidate actually
+// covers, so a hard 70 gate emptied this page for essentially every user
+// (measured: 0% of live scores reached 70, max observed 60). Relevance bands
+// are communicated per-card via lib/score.ts instead.
+const REC_THRESHOLD = 30;
 
 export default function RecommendedPage() {
   const { isLoading, user } = useRequireAuth("/login", "candidate");
@@ -87,7 +93,7 @@ export default function RecommendedPage() {
           icon={Zap}
           eyebrow="For you"
           title="Recommended"
-          subtitle="Strong matches (70%+) against the resume in your profile"
+          subtitle="Ranked against the skills and resume in your profile, best match first"
         />
 
         {loading ? (
@@ -101,9 +107,9 @@ export default function RecommendedPage() {
             <div className="h-14 w-14 rounded-xl bg-slate-100 flex items-center justify-center mb-4 ring-1 ring-slate-200/70">
               <Zap size={24} className="text-slate-400" />
             </div>
-            <p className="font-medium text-slate-600">No strong matches yet</p>
+            <p className="font-medium text-slate-600">No matches yet</p>
             <p className="text-sm text-slate-500 mt-1 max-w-sm">
-              We only show roles matching 70%+. Add skills to your profile or upload your CV to raise your matches — meanwhile, browse every role on the All Jobs page.
+              Add skills to your profile or upload your CV so we can match you against open roles — meanwhile, browse every role on the All Jobs page.
             </p>
             <div className="mt-5 flex gap-3">
               <Link href="/profile" className="btn-outline !py-2 !text-xs !px-4">Update profile</Link>
@@ -112,7 +118,7 @@ export default function RecommendedPage() {
           </div>
         ) : (
           <>
-            <p className="text-sm text-slate-500 mb-4 tabular-nums">{strong.length} strong {strong.length === 1 ? "match" : "matches"}</p>
+            <p className="text-sm text-slate-500 mb-4 tabular-nums">{strong.length} {strong.length === 1 ? "match" : "matches"}</p>
             <div className="grid md:grid-cols-2 gap-4">
               {strong.map(m => (
                 <JobCard

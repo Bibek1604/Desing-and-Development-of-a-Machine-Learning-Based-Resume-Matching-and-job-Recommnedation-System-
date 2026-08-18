@@ -8,6 +8,9 @@ class JobMatchSerializer(serializers.Serializer):
     score = serializers.IntegerField()
     similarity = serializers.IntegerField()
     matched_skills = serializers.ListField(child=serializers.CharField())
+    # Classifier output, exposed separately so no client can mistake it for the
+    # "% match" figure. Null when no trained artifact is loaded.
+    shortlist_probability = serializers.FloatField(allow_null=True, required=False)
 
 
 class CandidateMatchSerializer(serializers.Serializer):
@@ -20,6 +23,9 @@ class CandidateMatchSerializer(serializers.Serializer):
     score = serializers.IntegerField()
     similarity = serializers.IntegerField()
     matched_skills = serializers.ListField(child=serializers.CharField())
+    # Classifier output, exposed separately so no client can mistake it for the
+    # "% match" figure. Null when no trained artifact is loaded.
+    shortlist_probability = serializers.FloatField(allow_null=True, required=False)
 
     def get_candidate(self, obj):
         user = obj["candidate"]
